@@ -107,7 +107,7 @@ Two report formats are supported:
 - **Markdown** (`generate_markdown_report`): Human-readable, grouped by risk level, suitable for sharing with legal or management teams.
 - **JSON** (`generate_json_report`): Machine-readable, serialised from Pydantic models, suitable for SIEM ingestion or API delivery.
 
-The CLI (`cli/main.py`) also renders an interactive [Rich](https://github.com/Textualize/rich) table in the terminal with colour-coded risk levels for rapid triage.
+The CLI (`cli/main.py`) renders a colour-coded [Rich](https://github.com/Textualize/rich) table when available and degrades to plain-text tables when `rich` is absent, preserving the offline install baseline used across the portfolio.
 
 ---
 
@@ -134,6 +134,22 @@ verifies mailbox existence.
 
 ---
 
+## Takedown Case Workflow
+
+**Modules:** `reports/takedown_evidence.py`, `reports/takedown_case.py`
+
+The takedown workflow converts validated `BrandFinding` records into a file-backed case bundle:
+
+- `takedown_evidence.py` creates the ZIP evidence archive with manifest, summary, DNS notes, WHOIS instructions, and checksums
+- `takedown_case.py` wraps that archive in a persistent case directory containing:
+  - `case.json` with status, timestamps, case metadata, and history
+  - `registrar_request.md` with a registrar abuse-report template
+  - `icann_complaint.md` with an ICANN escalation template
+
+The CLI exposes this through `phishing-monitor takedown-case create` and `phishing-monitor takedown-case update`, allowing analysts to preserve a consistent workflow without introducing live registrar automation or unsafe outbound actions.
+
+---
+
 ## Module Dependency Graph
 
 ```
@@ -142,8 +158,11 @@ cli/main.py
   ├── analyzers/dns_checker.py              (network: DNS only)
   ├── analyzers/email_security/mx_spf_checker.py  (network: DNS TXT/MX only)
   ├── schemas/case.py                       (pure, Pydantic models)
-  └── reports/generator.py
-        └── schemas/case.py
+  └── reports/
+        ├── generator.py
+        ├── takedown_evidence.py
+        └── takedown_case.py
+              └── schemas/case.py
 ```
 
 There are no circular imports. The `analyzers` layer has no dependency on `schemas` or `reports`.
@@ -167,4 +186,4 @@ There are no circular imports. The `analyzers` layer has no dependency on `schem
 - **New generation techniques**: Add a function to `detector.py` and call `_add()` within `generate_typosquats`.
 - **Certificate transparency monitoring** (v0.2 delivered): `analyzers/ct_monitor.py` + `analyzers/ct_alerts.py` provide crt.sh querying, new-registration detection, wildcard alerting, and stateful comparison across executions.
 - **MX/SPF/DKIM/DMARC analysis** (v0.3 delivered): `analyzers/email_security/mx_spf_checker.py` provides passive email-abuse posture scoring for explicit or generated lookalike domains.
-- **Automated takedown templates** (planned v0.4): A new `reports/takedown.py` module producing registrar-specific abuse report templates.
+- **Takedown workflow** (v0.4 delivered): `reports/takedown_case.py` creates portable case bundles with templates and status history; future work can add more provider-specific templates without changing the evidence package contract.

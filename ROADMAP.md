@@ -18,6 +18,6 @@
 - [x] SPF/DKIM/DMARC gap detection on lookalike domains
 
 ## v0.4 — Takedown Automation
-- [ ] ICANN/Registrar takedown request templates
-- [ ] Evidence packaging for abuse reports
-- [ ] Case status tracking
+- [x] ICANN/Registrar takedown request templates
+- [x] Evidence packaging for abuse reports
+- [x] Case status tracking

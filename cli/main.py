@@ -10,13 +10,68 @@ Commands:
 from __future__ import annotations
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
 import click
-from rich.console import Console
-from rich.table import Table
-from rich import box
+try:
+    from rich.console import Console
+    from rich.table import Table
+    from rich import box
+except ModuleNotFoundError:  # pragma: no cover - exercised via CLI tests
+    class _PlainStatus:
+        def __init__(self, console: "Console", message: str) -> None:
+            self.console = console
+            self.message = message
+
+        def __enter__(self) -> "_PlainStatus":
+            self.console.print(self.message)
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    class Console:
+        def print(self, *args, **kwargs) -> None:
+            parts = []
+            for arg in args:
+                parts.append(re.sub(r"\[/?[^\]]+\]", "", str(arg)))
+            print(*parts)
+
+        def rule(self, text: str) -> None:
+            self.print(text)
+
+        def status(self, message: str) -> _PlainStatus:
+            return _PlainStatus(self, message)
+
+    class Table:
+        def __init__(self, title: str | None = None, **kwargs) -> None:
+            self.title = title
+            self.columns: list[str] = []
+            self.rows: list[list[str]] = []
+
+        def add_column(self, label: str, **kwargs) -> None:
+            self.columns.append(label)
+
+        def add_row(self, *values: str) -> None:
+            self.rows.append([re.sub(r"\[/?[^\]]+\]", "", str(value)) for value in values])
+
+        def __str__(self) -> str:
+            lines: list[str] = []
+            if self.title:
+                lines.append(self.title)
+            if self.columns:
+                lines.append(" | ".join(self.columns))
+                lines.append("-+-".join("-" * len(col) for col in self.columns))
+            for row in self.rows:
+                lines.append(" | ".join(row))
+            return "\n".join(lines)
+
+    class _Box:
+        ROUNDED = None
+
+    box = _Box()
 
 # Ensure project root is importable when running directly
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -34,8 +89,13 @@ from analyzers.email_security.mx_spf_checker import (
     DEFAULT_DKIM_SELECTORS,
     check_email_posture,
 )
-from schemas.case import BrandFinding, compute_risk
 from reports.generator import generate_markdown_report, generate_json_report
+from reports.takedown_case import (
+    create_takedown_case_bundle,
+    load_findings_json,
+    update_takedown_case_status,
+)
+from schemas.case import BrandFinding, CaseStatus, compute_risk
 
 console = Console()
 
@@ -488,6 +548,97 @@ def email_posture(
         }
         output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         console.print(f"[green]JSON posture report written:[/green] {output_path}")
+
+
+@cli.group("takedown-case")
+def takedown_case_group() -> None:
+    """Create or update a defensive takedown case bundle."""
+
+
+@takedown_case_group.command("create")
+@click.argument("brand_domain")
+@click.option(
+    "--findings-json",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="JSON file containing BrandFinding-compatible records.",
+)
+@click.option(
+    "--output-dir",
+    default="case-output",
+    show_default=True,
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Directory where the case bundle will be written.",
+)
+@click.option("--case-id", default=None, help="Optional override for the case identifier.")
+@click.option("--brand-name", default="", help="Optional brand display name.")
+@click.option("--brand-owner", default="", help="Optional brand owner / legal entity.")
+@click.option("--reporter-name", default="", help="Optional analyst or reporter name.")
+@click.option("--reporter-email", default="", help="Optional analyst contact email.")
+@click.option("--registrar-name", default="", help="Registrar name for the abuse template.")
+@click.option(
+    "--registrar-abuse-email",
+    default="",
+    help="Registrar abuse contact email for the template.",
+)
+def takedown_case_create(
+    brand_domain: str,
+    findings_json: Path,
+    output_dir: Path,
+    case_id: str | None,
+    brand_name: str,
+    brand_owner: str,
+    reporter_name: str,
+    reporter_email: str,
+    registrar_name: str,
+    registrar_abuse_email: str,
+) -> None:
+    """Create a case bundle with evidence ZIP and takedown request templates."""
+    findings = load_findings_json(findings_json)
+    bundle = create_takedown_case_bundle(
+        findings=findings,
+        brand_domain=brand_domain,
+        output_dir=output_dir,
+        case_id=case_id,
+        brand_name=brand_name,
+        brand_owner=brand_owner,
+        reporter_name=reporter_name,
+        reporter_email=reporter_email,
+        registrar_name=registrar_name,
+        registrar_abuse_email=registrar_abuse_email,
+    )
+    console.print(f"[green]Case bundle written:[/green] {bundle['case_dir']}")
+    console.print(
+        "[bold]Summary:[/bold] "
+        f"case_id={bundle['case_id']}, findings={bundle['total_findings']}, "
+        f"status={bundle['status']}"
+    )
+    console.print(f"[dim]Evidence package:[/dim] {bundle['evidence_package']}")
+
+
+@takedown_case_group.command("update")
+@click.argument("case_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option(
+    "--status",
+    "status_value",
+    required=True,
+    type=click.Choice([status.value for status in CaseStatus], case_sensitive=False),
+    help="New case status.",
+)
+@click.option("--note", default="", help="Optional case note for the status change.")
+def takedown_case_update(case_file: Path, status_value: str, note: str) -> None:
+    """Update a case JSON file with a new workflow status."""
+    case = update_takedown_case_status(
+        case_file=case_file,
+        status=CaseStatus(status_value),
+        note=note,
+    )
+    console.print(f"[green]Case updated:[/green] {case_file}")
+    console.print(
+        "[bold]Summary:[/bold] "
+        f"case_id={case['case_id']}, status={case['status']}, "
+        f"history_entries={len(case['status_history'])}"
+    )
 
 
 def main() -> None:

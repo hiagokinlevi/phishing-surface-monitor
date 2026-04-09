@@ -17,7 +17,8 @@ Security teams need systematic ways to monitor for brand impersonation without e
 - Monitoring CT logs for new lookalike certificate registrations
 - Detecting wildcard certificates that may indicate broad phishing infrastructure
 - Analyzing lookalike domains for email abuse posture across MX, SPF, DKIM, and DMARC
-- Organizing evidence for authorized takedown requests
+- Organizing evidence for authorized takedown requests, including registrar and ICANN templates
+- Tracking takedown case status across triage, review, submission, and monitoring
 - Training analysts to recognize typosquatting patterns
 - Generating reports on brand surface exposure
 
@@ -52,6 +53,13 @@ phishing-monitor ct-monitor example.com --output-json reports-output/example_ct_
 
 # Analyze likely lookalike domains for email-receiving and spoofing gaps
 phishing-monitor email-posture example.com --output-json reports-output/example_email_posture.json
+
+# Build a takedown case bundle from a JSON finding set
+phishing-monitor takedown-case create example.com \
+  --findings-json reports-output/example_com_report.json \
+  --output-dir case-output \
+  --registrar-name "Example Registrar" \
+  --registrar-abuse-email abuse@example-registrar.test
 ```
 
 `email-posture` can also inspect explicit candidates and custom DKIM selectors:
@@ -64,6 +72,9 @@ The offline-safe install above assumes a workstation that already has the shared
 Python tooling used across the Cyber Port repos. If you have internet access and
 prefer isolated dependency resolution, `python -m pip install -e ".[dev]"`
 remains supported.
+
+If `rich` is unavailable, the CLI falls back to plain-text output so offline
+editable installs still work for help paths and automation runs.
 
 ## License
 
