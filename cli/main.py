@@ -5,6 +5,7 @@ Commands:
   scan BRAND_DOMAIN   Generate typosquat candidates, perform DNS checks,
                       display results, and optionally write a report file.
   ct-monitor BRAND_DOMAIN  Monitor CT logs for new registrations and wildcard alerts.
+  email-posture BRAND_DOMAIN [CANDIDATE_DOMAINS...]  Analyze lookalike email-abuse posture.
 """
 from __future__ import annotations
 import json
@@ -28,6 +29,10 @@ from analyzers.ct_alerts import (
     load_ct_state,
     merge_known_certificate_ids,
     save_ct_state,
+)
+from analyzers.email_security.mx_spf_checker import (
+    DEFAULT_DKIM_SELECTORS,
+    check_email_posture,
 )
 from schemas.case import BrandFinding, compute_risk
 from reports.generator import generate_markdown_report, generate_json_report
@@ -331,6 +336,158 @@ def ct_monitor(
 
     if fail_on_alerts and batch.all_alerts():
         sys.exit(1)
+
+
+@cli.command("email-posture")
+@click.argument("brand_domain")
+@click.argument("candidate_domains", nargs=-1)
+@click.option(
+    "--threshold",
+    default=0.78,
+    show_default=True,
+    type=float,
+    help="Minimum similarity score when auto-generating lookalike domains.",
+)
+@click.option(
+    "--limit",
+    default=12,
+    show_default=True,
+    type=int,
+    help="Maximum number of auto-generated lookalike domains to analyze.",
+)
+@click.option(
+    "--timeout",
+    default=3.0,
+    show_default=True,
+    type=float,
+    help="DNS timeout for each lookup.",
+)
+@click.option(
+    "--selector",
+    "selectors",
+    multiple=True,
+    help="Additional DKIM selector to test. Can be provided multiple times.",
+)
+@click.option(
+    "--output-json",
+    default=None,
+    help="Optional output path for a JSON posture report.",
+)
+def email_posture(
+    brand_domain: str,
+    candidate_domains: tuple[str, ...],
+    threshold: float,
+    limit: int,
+    timeout: float,
+    selectors: tuple[str, ...],
+    output_json: str | None,
+) -> None:
+    """Analyze MX/SPF/DKIM/DMARC gaps on explicit or generated lookalike domains."""
+    if candidate_domains:
+        similarity_map = {domain: None for domain in candidate_domains}
+    else:
+        generated = [
+            variant for variant in generate_typosquats(brand_domain)
+            if variant.similarity_score >= threshold
+        ][:limit]
+        similarity_map = {variant.domain: variant.similarity_score for variant in generated}
+
+    if not similarity_map:
+        console.print("[yellow]No candidate domains selected for email posture analysis.[/yellow]")
+        return
+
+    selector_list = list(selectors) if selectors else list(DEFAULT_DKIM_SELECTORS)
+    console.rule(f"[bold blue]Email Posture: {brand_domain}[/bold blue]")
+    console.print(
+        f"[dim]Analyzing {len(similarity_map)} candidate domains with {len(selector_list)} DKIM selector checks.[/dim]"
+    )
+
+    results = []
+    for domain, similarity in similarity_map.items():
+        posture = check_email_posture(domain, timeout=timeout, dkim_selectors=selector_list)
+        results.append({
+            "domain": domain,
+            "similarity": similarity,
+            "posture": posture,
+        })
+
+    severity_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
+    results.sort(
+        key=lambda item: (
+            severity_order.get(item["posture"].risk_level, 99),
+            -(item["similarity"] or 0.0),
+            item["domain"],
+        ),
+    )
+
+    table = Table(
+        title=f"Email Abuse Posture for {brand_domain}",
+        box=box.ROUNDED,
+        show_lines=False,
+    )
+    table.add_column("Domain", style="bold white")
+    table.add_column("Similarity", justify="right")
+    table.add_column("MX", justify="center")
+    table.add_column("SPF", justify="center")
+    table.add_column("DMARC", justify="center")
+    table.add_column("DKIM", justify="center")
+    table.add_column("Risk", justify="center")
+
+    severity_colours = {
+        "CRITICAL": "bold red",
+        "HIGH": "red",
+        "MEDIUM": "yellow",
+        "LOW": "cyan",
+        "INFO": "dim",
+    }
+
+    for item in results:
+        posture = item["posture"]
+        similarity = item["similarity"]
+        colour = severity_colours.get(posture.risk_level, "white")
+        table.add_row(
+            item["domain"],
+            "manual" if similarity is None else f"{similarity:.3f}",
+            "YES" if posture.has_mx else "no",
+            posture.spf_posture,
+            posture.dmarc_posture,
+            str(len(posture.dkim_records)),
+            f"[{colour}]{posture.risk_level}[/{colour}]",
+        )
+
+    console.print(table)
+    total_gaps = sum(len(item["posture"].gaps) for item in results)
+    risky_domains = sum(1 for item in results if item["posture"].risk_level in {"CRITICAL", "HIGH", "MEDIUM"})
+    console.print(
+        "[bold]Summary:[/bold] "
+        f"analyzed={len(results)}, risky={risky_domains}, total_gaps={total_gaps}"
+    )
+
+    for item in results[:5]:
+        posture = item["posture"]
+        if not posture.gaps:
+            continue
+        console.print(f"[bold]{item['domain']}[/bold]")
+        for gap in posture.gaps[:3]:
+            console.print(f"  - [{gap.severity}] {gap.summary}")
+
+    if output_json:
+        output_path = Path(output_json)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "brand_domain": brand_domain,
+            "tested_dkim_selectors": selector_list,
+            "results": [
+                {
+                    "domain": item["domain"],
+                    "similarity_score": item["similarity"],
+                    "posture": item["posture"].to_dict(),
+                }
+                for item in results
+            ],
+        }
+        output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        console.print(f"[green]JSON posture report written:[/green] {output_path}")
 
 
 def main() -> None:

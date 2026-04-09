@@ -16,6 +16,7 @@ Security teams need systematic ways to monitor for brand impersonation without e
 - Scoring similarity between observed domains and legitimate brand assets
 - Monitoring CT logs for new lookalike certificate registrations
 - Detecting wildcard certificates that may indicate broad phishing infrastructure
+- Analyzing lookalike domains for email abuse posture across MX, SPF, DKIM, and DMARC
 - Organizing evidence for authorized takedown requests
 - Training analysts to recognize typosquatting patterns
 - Generating reports on brand surface exposure
@@ -39,14 +40,30 @@ docs/           — Methodology and governance guides
 ## How to Run
 
 ```bash
-pip install -e ".[dev]"
+python3 -m venv .venv --system-site-packages
+. .venv/bin/activate
+python -m pip install --no-build-isolation --no-deps -e .
 
 # Run a typosquatting + DNS surface scan
-python -m cli.main scan example.com --threshold 0.75 --report --json-report
+phishing-monitor scan example.com --threshold 0.75 --report --json-report
 
 # Monitor CT logs for new registrations and wildcard alerts
-python -m cli.main ct-monitor example.com --output-json reports-output/example_ct_alerts.json
+phishing-monitor ct-monitor example.com --output-json reports-output/example_ct_alerts.json
+
+# Analyze likely lookalike domains for email-receiving and spoofing gaps
+phishing-monitor email-posture example.com --output-json reports-output/example_email_posture.json
 ```
+
+`email-posture` can also inspect explicit candidates and custom DKIM selectors:
+
+```bash
+phishing-monitor email-posture example.com login-example.net secure-example.org --selector default --selector selector1
+```
+
+The offline-safe install above assumes a workstation that already has the shared
+Python tooling used across the Cyber Port repos. If you have internet access and
+prefer isolated dependency resolution, `python -m pip install -e ".[dev]"`
+remains supported.
 
 ## License
 

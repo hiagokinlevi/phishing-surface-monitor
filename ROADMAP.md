@@ -14,8 +14,8 @@
 - [x] New certificate registration notifications
 
 ## v0.3 — MX & Email Infrastructure
-- [ ] MX record analysis for spoofing risk
-- [ ] SPF/DKIM/DMARC gap detection on lookalike domains
+- [x] MX record analysis for spoofing risk
+- [x] SPF/DKIM/DMARC gap detection on lookalike domains
 
 ## v0.4 — Takedown Automation
 - [ ] ICANN/Registrar takedown request templates

@@ -1,27 +1,66 @@
 """
-Email security posture checker for lookalike domains.
+Email security posture analysis for lookalike domains.
 
-Checks MX records and SPF/DKIM/DMARC policies on candidate lookalike domains.
-A lookalike domain that:
-  - Has MX records → can receive email (phishing/BEC risk)
-  - Has no SPF policy → can spoof sender addresses more easily
-  - Has no DMARC policy → no enforcement against spoofed email
-
-Uses standard DNS resolution only. No active probing or mail sending.
+This module evaluates whether a domain can receive mail and whether it exposes
+common spoofing gaps across SPF, DKIM, and DMARC. It uses DNS lookups only and
+never sends mail or probes remote services.
 """
 from __future__ import annotations
-import socket
+
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Sequence
+
+
+DEFAULT_DKIM_SELECTORS: tuple[str, ...] = (
+    "default",
+    "selector1",
+    "selector2",
+    "google",
+    "k1",
+    "mail",
+    "smtp",
+    "dkim",
+)
+
+_SEVERITY_ORDER = {
+    "CRITICAL": 4,
+    "HIGH": 3,
+    "MEDIUM": 2,
+    "LOW": 1,
+    "INFO": 0,
+}
+
+
+@dataclass
+class EmailGap:
+    """A single email-authentication or abuse-path gap."""
+
+    control: str
+    severity: str
+    summary: str
+    recommendation: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "control": self.control,
+            "severity": self.severity,
+            "summary": self.summary,
+            "recommendation": self.recommendation,
+        }
 
 
 @dataclass
 class EmailPosture:
+    """Aggregated email-abuse posture for one domain."""
+
     domain: str
     has_mx: bool
     mx_records: list[str] = field(default_factory=list)
     spf_record: Optional[str] = None
     dmarc_record: Optional[str] = None
+    dkim_records: dict[str, str] = field(default_factory=dict)
+    tested_dkim_selectors: list[str] = field(default_factory=list)
+    gaps: list[EmailGap] = field(default_factory=list)
 
     @property
     def has_spf(self) -> bool:
@@ -32,51 +71,59 @@ class EmailPosture:
         return self.dmarc_record is not None
 
     @property
-    def risk_level(self) -> str:
-        """
-        Assess email spoofing risk level.
+    def has_dkim(self) -> bool:
+        return bool(self.dkim_records)
 
-        HIGH:   Has MX and no DMARC — can receive mail and no anti-spoofing enforcement
-        MEDIUM: Has MX but has DMARC (some protection exists)
-        LOW:    No MX records — cannot receive email
-        """
-        if self.has_mx and not self.has_dmarc:
-            return "HIGH"
+    @property
+    def spf_posture(self) -> str:
+        return _classify_spf_posture(self.spf_record)
+
+    @property
+    def dmarc_posture(self) -> str:
+        return _classify_dmarc_posture(self.dmarc_record)
+
+    @property
+    def risk_level(self) -> str:
+        if self.gaps:
+            return max(self.gaps, key=lambda gap: _SEVERITY_ORDER.get(gap.severity, -1)).severity
         if self.has_mx:
-            return "MEDIUM"
-        return "LOW"
+            return "LOW"
+        return "INFO"
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "domain": self.domain,
+            "has_mx": self.has_mx,
+            "mx_records": list(self.mx_records),
+            "spf_record": self.spf_record,
+            "spf_posture": self.spf_posture,
+            "dmarc_record": self.dmarc_record,
+            "dmarc_posture": self.dmarc_posture,
+            "dkim_records": dict(self.dkim_records),
+            "tested_dkim_selectors": list(self.tested_dkim_selectors),
+            "risk_level": self.risk_level,
+            "gaps": [gap.to_dict() for gap in self.gaps],
+        }
 
 
 def _txt_lookup(domain: str, timeout: float = 3.0) -> list[str]:
-    """
-    Perform a TXT record lookup using the system resolver.
-
-    Args:
-        domain:  Domain name to query.
-        timeout: Socket timeout in seconds.
-
-    Returns:
-        List of TXT record strings.
-    """
-    socket.setdefaulttimeout(timeout)
+    """Perform a TXT lookup and return record text values."""
     try:
-        # Use getaddrinfo with AF_UNSPEC to trigger a resolver call;
-        # for TXT records we use a manual query via dnspython if available,
-        # otherwise fall back to a best-effort approach.
         import dns.resolver  # type: ignore[import]
+
         answers = dns.resolver.resolve(domain, "TXT", lifetime=timeout)
         return [r.to_text().strip('"') for r in answers]
     except ImportError:
-        # dnspython not available — return empty (caller handles gracefully)
         return []
     except Exception:
         return []
 
 
 def _mx_lookup(domain: str, timeout: float = 3.0) -> list[str]:
-    """Perform an MX record lookup."""
+    """Perform an MX lookup and return exchange hostnames."""
     try:
         import dns.resolver  # type: ignore[import]
+
         answers = dns.resolver.resolve(domain, "MX", lifetime=timeout)
         return [str(r.exchange).rstrip(".") for r in answers]
     except ImportError:
@@ -85,39 +132,149 @@ def _mx_lookup(domain: str, timeout: float = 3.0) -> list[str]:
         return []
 
 
-def check_email_posture(domain: str, timeout: float = 3.0) -> EmailPosture:
+def _extract_matching_record(records: Sequence[str], prefix: str) -> Optional[str]:
+    for record in records:
+        if record.lower().startswith(prefix):
+            return record
+    return None
+
+
+def _classify_spf_posture(record: Optional[str]) -> str:
+    if record is None:
+        return "missing"
+
+    normalised = " ".join(record.lower().split())
+    if "+all" in normalised:
+        return "permissive"
+    if "?all" in normalised:
+        return "neutral"
+    if "~all" in normalised:
+        return "softfail"
+    if "-all" in normalised:
+        return "strict"
+    return "present"
+
+
+def _classify_dmarc_posture(record: Optional[str]) -> str:
+    if record is None:
+        return "missing"
+
+    normalised = record.lower()
+    for segment in normalised.split(";"):
+        token = segment.strip()
+        if token.startswith("p="):
+            policy = token.split("=", 1)[1].strip()
+            if policy in {"reject", "quarantine", "none"}:
+                return policy
+            return "invalid"
+    return "invalid"
+
+
+def _lookup_dkim_records(
+    domain: str,
+    selectors: Sequence[str],
+    timeout: float,
+) -> dict[str, str]:
+    discovered: dict[str, str] = {}
+    for selector in selectors:
+        records = _txt_lookup(f"{selector}._domainkey.{domain}", timeout=timeout)
+        dkim_record = _extract_matching_record(records, "v=dkim1")
+        if dkim_record:
+            discovered[selector] = dkim_record
+    return discovered
+
+
+def _build_gaps(posture: EmailPosture) -> list[EmailGap]:
+    gaps: list[EmailGap] = []
+
+    if posture.has_mx:
+        gaps.append(EmailGap(
+            control="mx",
+            severity="MEDIUM",
+            summary="Domain publishes MX records and can receive phishing or BEC replies.",
+            recommendation="Review the MX host ownership and monitor mailbox abuse on this lookalike domain.",
+        ))
+
+    spf_posture = posture.spf_posture
+    if spf_posture == "missing":
+        gaps.append(EmailGap(
+            control="spf",
+            severity="HIGH",
+            summary="No SPF record was found.",
+            recommendation="Treat mail from this lookalike as ungoverned and prioritize abuse monitoring.",
+        ))
+    elif spf_posture in {"permissive", "neutral"}:
+        gaps.append(EmailGap(
+            control="spf",
+            severity="CRITICAL" if spf_posture == "permissive" else "HIGH",
+            summary=f"SPF policy is {spf_posture} and does not strongly restrict spoofed senders.",
+            recommendation="Escalate because the domain can present weak sender-authentication controls.",
+        ))
+
+    dmarc_posture = posture.dmarc_posture
+    if dmarc_posture == "missing":
+        gaps.append(EmailGap(
+            control="dmarc",
+            severity="HIGH",
+            summary="No DMARC policy was found.",
+            recommendation="Assume downstream receivers will have no domain-owner enforcement guidance.",
+        ))
+    elif dmarc_posture == "none":
+        gaps.append(EmailGap(
+            control="dmarc",
+            severity="MEDIUM",
+            summary="DMARC policy is set to monitor-only (`p=none`).",
+            recommendation="Track this domain because mailbox providers may still accept unauthenticated mail.",
+        ))
+    elif dmarc_posture == "invalid":
+        gaps.append(EmailGap(
+            control="dmarc",
+            severity="MEDIUM",
+            summary="DMARC TXT record exists but its policy is missing or invalid.",
+            recommendation="Verify whether the domain is intentionally misconfigured or abandoned.",
+        ))
+
+    if not posture.has_dkim:
+        gaps.append(EmailGap(
+            control="dkim",
+            severity="MEDIUM" if posture.has_mx else "LOW",
+            summary="No DKIM record was observed for the tested selectors.",
+            recommendation=(
+                "Check additional selectors if known. Absence across common selectors is a useful abuse signal."
+            ),
+        ))
+
+    return gaps
+
+
+def check_email_posture(
+    domain: str,
+    timeout: float = 3.0,
+    dkim_selectors: Sequence[str] | None = None,
+) -> EmailPosture:
     """
-    Check the email security posture of a domain.
+    Evaluate email-security posture for a domain.
 
-    Performs MX, SPF (TXT record starting with 'v=spf1'),
-    and DMARC (_dmarc.domain TXT record) lookups.
-
-    Args:
-        domain:  Domain to check.
-        timeout: DNS timeout per query in seconds.
-
-    Returns:
-        EmailPosture with MX, SPF, and DMARC findings.
+    The DKIM check is heuristic-based: it tests a caller-provided selector list
+    or a curated default set of commonly observed selectors.
     """
-    posture = EmailPosture(domain=domain, has_mx=False)
+    selectors = list(dkim_selectors or DEFAULT_DKIM_SELECTORS)
+    posture = EmailPosture(
+        domain=domain,
+        has_mx=False,
+        tested_dkim_selectors=selectors,
+    )
 
-    # MX records
     mx_records = _mx_lookup(domain, timeout)
     posture.has_mx = bool(mx_records)
     posture.mx_records = mx_records
 
-    # SPF record (TXT record at the apex domain starting with v=spf1)
     txt_records = _txt_lookup(domain, timeout)
-    for txt in txt_records:
-        if txt.lower().startswith("v=spf1"):
-            posture.spf_record = txt
-            break
+    posture.spf_record = _extract_matching_record(txt_records, "v=spf1")
 
-    # DMARC record (TXT record at _dmarc.domain)
     dmarc_records = _txt_lookup(f"_dmarc.{domain}", timeout)
-    for txt in dmarc_records:
-        if txt.lower().startswith("v=dmarc1"):
-            posture.dmarc_record = txt
-            break
+    posture.dmarc_record = _extract_matching_record(dmarc_records, "v=dmarc1")
 
+    posture.dkim_records = _lookup_dkim_records(domain, selectors, timeout)
+    posture.gaps = _build_gaps(posture)
     return posture

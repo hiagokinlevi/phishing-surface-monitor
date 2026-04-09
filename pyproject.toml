@@ -1,15 +1,33 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "phishing-surface-monitor"
 version = "0.1.0"
+description = "Defensive brand protection toolkit for typosquatting and phishing-surface analysis."
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = ["pydantic>=2.0", "click>=8.0", "rich>=13.0", "dnspython>=2.4"]
 
+[project.scripts]
+phishing-monitor = "phishing_surface_monitor_cli:main"
+
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pytest-cov>=4.0"]
+
+[tool.setuptools]
+py-modules = ["phishing_surface_monitor_cli"]
+
+[tool.setuptools.packages.find]
+include = [
+    "alerting*",
+    "analyzers*",
+    "cli*",
+    "monitors*",
+    "reports*",
+    "schemas*",
+]
 
 [tool.pytest.ini_options]
 addopts = "--cov=analyzers --cov=schemas --cov-report=term-missing --cov-fail-under=70"
