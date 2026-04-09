@@ -123,6 +123,6 @@ There are no circular imports. The `analyzers` layer has no dependency on `schem
 ## Extension Points
 
 - **New generation techniques**: Add a function to `detector.py` and call `_add()` within `generate_typosquats`.
-- **Certificate transparency monitoring** (planned v0.2): A new module under `analyzers/cert_transparency/` that queries crt.sh and returns `DomainVariant`-compatible objects.
+- **Certificate transparency monitoring** (v0.2 delivered): `analyzers/ct_monitor.py` + `analyzers/ct_alerts.py` provide crt.sh querying, new-registration detection, wildcard alerting, and stateful comparison across executions.
 - **MX record analysis** (planned v0.3): Extend `DnsResult` or create a `MxResult` dataclass in `dns_checker.py`.
 - **Automated takedown templates** (planned v0.4): A new `reports/takedown.py` module producing registrar-specific abuse report templates.

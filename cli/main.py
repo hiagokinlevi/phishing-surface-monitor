@@ -4,8 +4,10 @@ CLI entry point for phishing-surface-monitor.
 Commands:
   scan BRAND_DOMAIN   Generate typosquat candidates, perform DNS checks,
                       display results, and optionally write a report file.
+  ct-monitor BRAND_DOMAIN  Monitor CT logs for new registrations and wildcard alerts.
 """
 from __future__ import annotations
+import json
 import os
 import sys
 from pathlib import Path
@@ -20,6 +22,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from analyzers.typosquatting.detector import generate_typosquats
 from analyzers.dns_checker import check_dns
+from analyzers.ct_monitor import query_ct_logs
+from analyzers.ct_alerts import (
+    evaluate_ct_alerts,
+    load_ct_state,
+    merge_known_certificate_ids,
+    save_ct_state,
+)
 from schemas.case import BrandFinding, compute_risk
 from reports.generator import generate_markdown_report, generate_json_report
 
@@ -37,7 +46,7 @@ _RISK_COLOURS = {
 
 @click.group()
 def cli() -> None:
-    """k1n Phishing Surface Monitor — brand domain lookalike detection toolkit."""
+    """Phishing Surface Monitor — brand domain lookalike detection toolkit."""
 
 
 @cli.command()
@@ -199,6 +208,129 @@ def scan(
             json_path = out_dir / f"{safe_domain}_report.json"
             json_path.write_text(generate_json_report(findings), encoding="utf-8")
             console.print(f"[green]JSON report written:[/green] {json_path}")
+
+
+@cli.command("ct-monitor")
+@click.argument("brand_domain")
+@click.option(
+    "--state-file",
+    default=None,
+    help="Path to state file with known CT certificate IDs (default: .ct-state/<brand>.json).",
+)
+@click.option(
+    "--include-subdomains/--root-only",
+    default=True,
+    show_default=True,
+    help="Query crt.sh using wildcard subdomain pattern (%.brand.tld) or root-only.",
+)
+@click.option(
+    "--timeout",
+    default=10.0,
+    show_default=True,
+    type=float,
+    help="HTTP timeout for crt.sh query.",
+)
+@click.option(
+    "--output-json",
+    default=None,
+    help="Optional output path for JSON alert report.",
+)
+@click.option(
+    "--fail-on-alerts",
+    is_flag=True,
+    default=False,
+    help="Return exit code 1 if any alert is detected.",
+)
+def ct_monitor(
+    brand_domain: str,
+    state_file: str | None,
+    include_subdomains: bool,
+    timeout: float,
+    output_json: str | None,
+    fail_on_alerts: bool,
+) -> None:
+    """Monitor CT logs for new registrations and wildcard certificate alerts."""
+    safe_domain = brand_domain.replace(".", "_")
+    state_path = Path(state_file) if state_file else Path(".ct-state") / f"{safe_domain}.json"
+
+    console.rule(f"[bold blue]CT Monitor: {brand_domain}[/bold blue]")
+    console.print("[dim]Querying crt.sh public CT logs...[/dim]")
+    certs = query_ct_logs(
+        brand_domain,
+        include_subdomains=include_subdomains,
+        timeout=timeout,
+        deduplicate=True,
+    )
+    if not certs:
+        console.print("[yellow]No CT records returned (or query failed).[/yellow]")
+        return
+
+    known_ids = load_ct_state(state_path)
+    batch = evaluate_ct_alerts(
+        brand_domain=brand_domain,
+        certs=certs,
+        known_certificate_ids=known_ids,
+    )
+    merged_ids = merge_known_certificate_ids(known_ids, certs)
+    save_ct_state(
+        state_path,
+        brand_domain=brand_domain,
+        known_certificate_ids=merged_ids,
+        checked_at=batch.checked_at,
+    )
+
+    table = Table(
+        title=f"CT Alerts for {brand_domain}",
+        box=box.ROUNDED,
+        show_lines=False,
+    )
+    table.add_column("Type", style="bold white")
+    table.add_column("Severity", justify="center")
+    table.add_column("CN", style="dim")
+    table.add_column("Cert ID", justify="right")
+    table.add_column("Issuer", style="dim")
+
+    severity_colours = {
+        "critical": "bold red",
+        "high": "red",
+        "medium": "yellow",
+    }
+
+    for alert in batch.all_alerts():
+        colour = severity_colours.get(alert.severity, "white")
+        table.add_row(
+            alert.alert_type,
+            f"[{colour}]{alert.severity.upper()}[/{colour}]",
+            alert.common_name or "—",
+            str(alert.cert_id),
+            alert.issuer or "—",
+        )
+
+    if batch.all_alerts():
+        console.print(table)
+    else:
+        console.print("[green]No CT alerts detected for lookalike certificates.[/green]")
+
+    console.print(
+        "[bold]Summary:[/bold] "
+        f"total={batch.total_certificates}, "
+        f"lookalikes={batch.lookalike_certificates}, "
+        f"new={len(batch.new_registration_alerts)}, "
+        f"wildcard={len(batch.wildcard_alerts)}"
+    )
+    console.print(f"[dim]State updated: {state_path}[/dim]")
+
+    if output_json:
+        output_path = Path(output_json)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(batch.to_dict(), indent=2),
+            encoding="utf-8",
+        )
+        console.print(f"[green]JSON alert report written:[/green] {output_path}")
+
+    if fail_on_alerts and batch.all_alerts():
+        sys.exit(1)
 
 
 def main() -> None:

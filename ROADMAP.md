@@ -9,9 +9,9 @@
 - [x] CLI scan command
 
 ## v0.2 — Certificate Transparency
-- [ ] CT log stream monitoring (crt.sh API)
-- [ ] Wildcard certificate alerts
-- [ ] New certificate registration notifications
+- [x] CT log stream monitoring (crt.sh API)
+- [x] Wildcard certificate alerts
+- [x] New certificate registration notifications
 
 ## v0.3 — MX & Email Infrastructure
 - [ ] MX record analysis for spoofing risk

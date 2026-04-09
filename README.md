@@ -14,6 +14,8 @@ Security teams need systematic ways to monitor for brand impersonation without e
 
 - Monitoring a brand's domain watchlist for new suspicious registrations
 - Scoring similarity between observed domains and legitimate brand assets
+- Monitoring CT logs for new lookalike certificate registrations
+- Detecting wildcard certificates that may indicate broad phishing infrastructure
 - Organizing evidence for authorized takedown requests
 - Training analysts to recognize typosquatting patterns
 - Generating reports on brand surface exposure
@@ -25,8 +27,8 @@ This toolkit is for authorized, defensive brand protection only. Do not use it t
 ## Structure
 
 ```
-analyzers/      — Typosquatting detection, similarity scoring
-collectors/     — Domain signal collectors
+analyzers/      — Typosquatting detection, similarity scoring, CT alerting
+monitors/       — DNS, certificate abuse, and takeover monitoring modules
 schemas/        — Case and finding schemas
 reports/        — Report generators
 cli/            — Command-line interface
@@ -39,11 +41,11 @@ docs/           — Methodology and governance guides
 ```bash
 pip install -e ".[dev]"
 
-# Analyze a domain for typosquatting variants
-k1n-phish-watch analyze-similarity --brand example.com --domain examp1e.com
+# Run a typosquatting + DNS surface scan
+python -m cli.main scan example.com --threshold 0.75 --report --json-report
 
-# Generate similarity report for a watchlist
-k1n-phish-watch generate-report --watchlist watchlist.yaml --output report.md
+# Monitor CT logs for new registrations and wildcard alerts
+python -m cli.main ct-monitor example.com --output-json reports-output/example_ct_alerts.json
 ```
 
 ## License
