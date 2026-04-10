@@ -21,3 +21,8 @@
 - [x] ICANN/Registrar takedown request templates
 - [x] Evidence packaging for abuse reports
 - [x] Case status tracking
+
+## v0.5 — Link Triage
+- [x] Offline URL obfuscation and redirect triage CLI
+- [x] JSON output for suspicious-link evidence handoff
+- [x] CI-friendly `--fail-on-suspicious` gate for analyst queues

@@ -134,6 +134,29 @@ verifies mailbox existence.
 
 ---
 
+## Offline URL Triage
+
+**Module:** `analyzers/url_deobfuscator.py`
+
+`analyze(url)` parses a supplied URL string and checks for obfuscation patterns
+commonly seen in phishing lures:
+
+- percent-encoded hostnames
+- Unicode homoglyph hostnames
+- non-standard IP address encodings
+- `data:` URI payloads
+- nested URL or open-redirect patterns
+- double-encoded percent sequences
+- embedded credentials in userinfo
+
+The CLI exposes this through `phishing-monitor url-triage`, accepting direct URL
+arguments or a newline-delimited `--input-file`. It can write a JSON report and
+return nonzero with `--fail-on-suspicious` for analyst queues or CI guardrails.
+This workflow is fully offline: it does not perform DNS resolution, HTTP
+requests, browser rendering, or page fetching.
+
+---
+
 ## Takedown Case Workflow
 
 **Modules:** `reports/takedown_evidence.py`, `reports/takedown_case.py`
@@ -157,6 +180,7 @@ cli/main.py
   ├── analyzers/typosquatting/detector.py   (pure, no I/O)
   ├── analyzers/dns_checker.py              (network: DNS only)
   ├── analyzers/email_security/mx_spf_checker.py  (network: DNS TXT/MX only)
+  ├── analyzers/url_deobfuscator.py         (pure, no I/O)
   ├── schemas/case.py                       (pure, Pydantic models)
   └── reports/
         ├── generator.py
@@ -175,6 +199,7 @@ There are no circular imports. The `analyzers` layer has no dependency on `schem
 |---|---|---|
 | `generate_typosquats` output | `list[DomainVariant]` | Pure dataclasses, no Pydantic overhead |
 | `check_dns` output | `DnsResult` | Pure dataclass |
+| `analyze` URL output | `URLOResult` | Pure dataclass with JSON-serialisable `to_dict()` |
 | `compute_risk` output | `RiskLevel` | Enum |
 | `BrandFinding` | Pydantic `BaseModel` | Validated, serialisable |
 | Report outputs | `str` | Markdown or JSON string |
@@ -187,3 +212,4 @@ There are no circular imports. The `analyzers` layer has no dependency on `schem
 - **Certificate transparency monitoring** (v0.2 delivered): `analyzers/ct_monitor.py` + `analyzers/ct_alerts.py` provide crt.sh querying, new-registration detection, wildcard alerting, and stateful comparison across executions.
 - **MX/SPF/DKIM/DMARC analysis** (v0.3 delivered): `analyzers/email_security/mx_spf_checker.py` provides passive email-abuse posture scoring for explicit or generated lookalike domains.
 - **Takedown workflow** (v0.4 delivered): `reports/takedown_case.py` creates portable case bundles with templates and status history; future work can add more provider-specific templates without changing the evidence package contract.
+- **URL triage** (v0.5 delivered): `analyzers/url_deobfuscator.py` stays pure and offline while `cli/main.py` handles file input, JSON output, and fail gates.

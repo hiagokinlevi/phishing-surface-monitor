@@ -17,6 +17,7 @@ Security teams need systematic ways to monitor for brand impersonation without e
 - Monitoring CT logs for new lookalike certificate registrations
 - Detecting wildcard certificates that may indicate broad phishing infrastructure
 - Analyzing lookalike domains for email abuse posture across MX, SPF, DKIM, and DMARC
+- Triage of suspicious phishing links for URL obfuscation, nested redirects, data URIs, encoded hosts, and embedded credentials
 - Organizing evidence for authorized takedown requests, including registrar and ICANN templates
 - Tracking takedown case status across triage, review, submission, and monitoring
 - Training analysts to recognize typosquatting patterns
@@ -54,6 +55,12 @@ phishing-monitor ct-monitor example.com --output-json reports-output/example_ct_
 # Analyze likely lookalike domains for email-receiving and spoofing gaps
 phishing-monitor email-posture example.com --output-json reports-output/example_email_posture.json
 
+# Triage suspicious phishing links without DNS or HTTP requests
+phishing-monitor url-triage \
+  'http://user:pass@0x7f000001/login?next=https://evil.test' \
+  --output-json reports-output/url_triage.json \
+  --fail-on-suspicious
+
 # Build a takedown case bundle from a JSON finding set
 phishing-monitor takedown-case create example.com \
   --findings-json reports-output/example_com_report.json \
@@ -67,6 +74,16 @@ phishing-monitor takedown-case create example.com \
 ```bash
 phishing-monitor email-posture example.com login-example.net secure-example.org --selector default --selector selector1
 ```
+
+`url-triage` can also read newline-delimited URL files:
+
+```bash
+phishing-monitor url-triage --input-file suspicious-urls.txt --output-json reports-output/url_triage.json
+```
+
+The URL triage path is fully offline. It does not resolve DNS, open HTTP
+connections, or fetch suspected phishing pages; it only parses the provided
+strings and reports obfuscation signals.
 
 The offline-safe install above assumes a workstation that already has the shared
 Python tooling used across the Cyber Port repos. If you have internet access and

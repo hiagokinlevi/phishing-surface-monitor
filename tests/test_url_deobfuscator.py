@@ -18,8 +18,12 @@ Run with:
     python -m pytest tests/test_url_deobfuscator.py -q
 """
 
-import sys
 import os
+import json
+import sys
+from pathlib import Path
+
+from click.testing import CliRunner
 
 # Allow imports from the project root when running pytest from any directory
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -770,3 +774,68 @@ class TestEdgeCases:
     def test_whitespace_only_url(self):
         r = analyze("   ")
         assert isinstance(r, URLOResult)
+
+
+# ===========================================================================
+# CLI workflow
+# ===========================================================================
+
+class TestUrlTriageCli:
+    def test_url_triage_writes_json_for_direct_urls(self, tmp_path: Path):
+        from cli.main import cli as main_cli
+
+        runner = CliRunner()
+        output_path = tmp_path / "url-triage.json"
+
+        result = runner.invoke(
+            main_cli,
+            [
+                "url-triage",
+                "https://example.com/login",
+                "http://user:pass@0x7f000001/login?next=https://evil.test",
+                "--output-json",
+                str(output_path),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "URL Triage" in result.output
+        assert "Summary:" in result.output
+        assert "suspicious=1" in result.output
+
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+        assert payload["total_urls"] == 2
+        assert payload["suspicious_urls"] == 1
+        suspicious = payload["results"][0]
+        assert suspicious["risk_score"] > 0
+        assert {finding["check_id"] for finding in suspicious["findings"]} >= {"URLO-003", "URLO-007"}
+
+    def test_url_triage_reads_input_file_and_fails_on_suspicious(self, tmp_path: Path):
+        from cli.main import cli as main_cli
+
+        input_path = tmp_path / "urls.txt"
+        input_path.write_text(
+            "\n".join([
+                "# analyst notes",
+                "https://safe.example/path",
+                "data:text/html,<form action=https://evil.test>",
+            ]),
+            encoding="utf-8",
+        )
+
+        result = CliRunner().invoke(
+            main_cli,
+            ["url-triage", "--input-file", str(input_path), "--fail-on-suspicious"],
+        )
+
+        assert result.exit_code == 1
+        assert "analyzed=2" in result.output
+        assert "suspicious=1" in result.output
+
+    def test_url_triage_requires_url_or_input_file(self):
+        from cli.main import cli as main_cli
+
+        result = CliRunner().invoke(main_cli, ["url-triage"])
+
+        assert result.exit_code != 0
+        assert "Provide at least one URL or --input-file." in result.output

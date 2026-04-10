@@ -89,6 +89,7 @@ from analyzers.email_security.mx_spf_checker import (
     DEFAULT_DKIM_SELECTORS,
     check_email_posture,
 )
+from analyzers.url_deobfuscator import analyze_many as analyze_urls
 from reports.generator import generate_markdown_report, generate_json_report
 from reports.takedown_case import (
     create_takedown_case_bundle,
@@ -548,6 +549,93 @@ def email_posture(
         }
         output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         console.print(f"[green]JSON posture report written:[/green] {output_path}")
+
+
+@cli.command("url-triage")
+@click.argument("urls", nargs=-1)
+@click.option(
+    "--input-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Optional newline-delimited URL file. Blank lines and # comments are skipped.",
+)
+@click.option(
+    "--output-json",
+    default=None,
+    help="Optional output path for a JSON URL triage report.",
+)
+@click.option(
+    "--fail-on-suspicious",
+    is_flag=True,
+    default=False,
+    help="Return exit code 1 when one or more URLs are suspicious.",
+)
+def url_triage(
+    urls: tuple[str, ...],
+    input_file: Path | None,
+    output_json: str | None,
+    fail_on_suspicious: bool,
+) -> None:
+    """Analyze phishing URLs for offline obfuscation and redirect signals."""
+    selected_urls = list(urls)
+    if input_file:
+        selected_urls.extend(
+            line.strip()
+            for line in input_file.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        )
+
+    if not selected_urls:
+        raise click.UsageError("Provide at least one URL or --input-file.")
+
+    results = analyze_urls(selected_urls)
+    results_sorted = sorted(results, key=lambda result: (-result.risk_score, result.original_url))
+
+    table = Table(
+        title="URL Triage",
+        box=box.ROUNDED,
+        show_lines=False,
+    )
+    table.add_column("URL", style="bold white")
+    table.add_column("Risk", justify="right")
+    table.add_column("Suspicious", justify="center")
+    table.add_column("Checks", style="dim")
+
+    for result in results_sorted:
+        checks = ", ".join(finding.check_id for finding in result.findings) or "-"
+        table.add_row(
+            result.original_url,
+            str(result.risk_score),
+            "YES" if result.is_suspicious else "no",
+            checks,
+        )
+
+    console.print(table)
+    suspicious_count = sum(1 for result in results if result.is_suspicious)
+    console.print(
+        "[bold]Summary:[/bold] "
+        f"analyzed={len(results)}, suspicious={suspicious_count}"
+    )
+
+    for result in results_sorted:
+        if not result.findings:
+            continue
+        console.print(f"[bold]{result.original_url}[/bold]")
+        for finding in result.findings:
+            console.print(f"  - [{finding.severity}] {finding.check_id}: {finding.title}")
+
+    if output_json:
+        output_path = Path(output_json)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "total_urls": len(results),
+            "suspicious_urls": suspicious_count,
+            "results": [result.to_dict() for result in results_sorted],
+        }
+        output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        console.print(f"[green]JSON URL triage report written:[/green] {output_path}")
+
+    if fail_on_suspicious and suspicious_count:
+        sys.exit(1)
 
 
 @cli.group("takedown-case")
