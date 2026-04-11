@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
+from analyzers.hostname_validation import normalize_hostname
+
 
 @dataclass
 class CtCertificate:
@@ -38,6 +40,23 @@ def _parse_dt(dt_str: str | None) -> Optional[datetime]:
         return None
 
 
+def _canonicalize_common_name(common_name: str) -> str:
+    """Normalize certificate common names for brand-domain comparisons."""
+    candidate = common_name.strip().lower().rstrip(".")
+    if not candidate:
+        return ""
+
+    wildcard = candidate.startswith("*.")
+    hostname = candidate[2:] if wildcard else candidate
+    try:
+        normalized_hostname = normalize_hostname(hostname)
+    except ValueError:
+        return candidate
+    if wildcard:
+        return f"*.{normalized_hostname}"
+    return normalized_hostname
+
+
 def query_ct_logs(
     domain: str,
     include_subdomains: bool = True,
@@ -56,7 +75,11 @@ def query_ct_logs(
     Returns:
         List of CtCertificate objects sorted by logged_at descending.
     """
-    query = f"%.{domain}" if include_subdomains else domain
+    if timeout <= 0:
+        raise ValueError("timeout must be greater than 0")
+
+    normalized_domain = normalize_hostname(domain)
+    query = f"%.{normalized_domain}" if include_subdomains else normalized_domain
     encoded = urllib.parse.quote(query)
     url = f"https://crt.sh/?q={encoded}&output=json"
 
@@ -109,7 +132,9 @@ def filter_lookalikes(certs: list[CtCertificate], brand_domain: str) -> list[CtC
     Returns:
         Certificates whose common_name does not end with the brand domain.
     """
+    normalized_brand_domain = normalize_hostname(brand_domain)
     return [
         c for c in certs
-        if not c.common_name.endswith(f".{brand_domain}") and c.common_name != brand_domain
+        if not _canonicalize_common_name(c.common_name).endswith(f".{normalized_brand_domain}")
+        and _canonicalize_common_name(c.common_name) != normalized_brand_domain
     ]

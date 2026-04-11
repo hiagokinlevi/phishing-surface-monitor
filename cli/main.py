@@ -85,6 +85,7 @@ from analyzers.ct_alerts import (
     merge_known_certificate_ids,
     save_ct_state,
 )
+from analyzers.hostname_validation import normalize_hostname
 from analyzers.email_security.mx_spf_checker import (
     DEFAULT_DKIM_SELECTORS,
     check_email_posture,
@@ -316,37 +317,45 @@ def ct_monitor(
     fail_on_alerts: bool,
 ) -> None:
     """Monitor CT logs for new registrations and wildcard certificate alerts."""
-    safe_domain = brand_domain.replace(".", "_")
+    try:
+        normalized_brand_domain = normalize_hostname(brand_domain)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="brand_domain") from exc
+
+    safe_domain = normalized_brand_domain.replace(".", "_")
     state_path = Path(state_file) if state_file else Path(".ct-state") / f"{safe_domain}.json"
 
-    console.rule(f"[bold blue]CT Monitor: {brand_domain}[/bold blue]")
+    console.rule(f"[bold blue]CT Monitor: {normalized_brand_domain}[/bold blue]")
     console.print("[dim]Querying crt.sh public CT logs...[/dim]")
-    certs = query_ct_logs(
-        brand_domain,
-        include_subdomains=include_subdomains,
-        timeout=timeout,
-        deduplicate=True,
-    )
+    try:
+        certs = query_ct_logs(
+            normalized_brand_domain,
+            include_subdomains=include_subdomains,
+            timeout=timeout,
+            deduplicate=True,
+        )
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="--timeout") from exc
     if not certs:
         console.print("[yellow]No CT records returned (or query failed).[/yellow]")
         return
 
     known_ids = load_ct_state(state_path)
     batch = evaluate_ct_alerts(
-        brand_domain=brand_domain,
+        brand_domain=normalized_brand_domain,
         certs=certs,
         known_certificate_ids=known_ids,
     )
     merged_ids = merge_known_certificate_ids(known_ids, certs)
     save_ct_state(
         state_path,
-        brand_domain=brand_domain,
+        brand_domain=normalized_brand_domain,
         known_certificate_ids=merged_ids,
         checked_at=batch.checked_at,
     )
 
     table = Table(
-        title=f"CT Alerts for {brand_domain}",
+        title=f"CT Alerts for {normalized_brand_domain}",
         box=box.ROUNDED,
         show_lines=False,
     )

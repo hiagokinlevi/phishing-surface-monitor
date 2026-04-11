@@ -77,17 +77,18 @@ class TestCtAlerts:
 
     def test_evaluate_ct_alerts_excludes_legitimate_brand_domains(self) -> None:
         certs = [
-            _cert(1, "paypal.com"),
-            _cert(2, "*.paypal.com"),
+            _cert(1, "PAYPAL.com."),
+            _cert(2, "*.PayPal.com"),
             _cert(3, "*.paypal-security-check.com"),
             _cert(4, "paypal-login-secure.net"),
         ]
         batch = evaluate_ct_alerts(
-            brand_domain="paypal.com",
+            brand_domain="PayPal.com.",
             certs=certs,
             known_certificate_ids=set(),
         )
         assert batch.total_certificates == 4
+        assert batch.brand_domain == "paypal.com"
         assert batch.lookalike_certificates == 2
         assert len(batch.new_registration_alerts) == 2
         assert len(batch.wildcard_alerts) == 1
@@ -122,15 +123,20 @@ class TestCtMonitorCli:
 
             original_query_cli = cli_main_module.query_ct_logs
             original_query_module = ct_monitor_module.query_ct_logs
+            captured_domains: list[str] = []
             try:
-                cli_main_module.query_ct_logs = lambda *args, **kwargs: fake_certs
-                ct_monitor_module.query_ct_logs = lambda *args, **kwargs: fake_certs
+                def fake_query(domain: str, *args, **kwargs):
+                    captured_domains.append(domain)
+                    return fake_certs
+
+                cli_main_module.query_ct_logs = fake_query
+                ct_monitor_module.query_ct_logs = fake_query
 
                 result = runner.invoke(
                     main_cli,
                     [
                         "ct-monitor",
-                        "paypal.com",
+                        "PayPal.com.",
                         "--state-file",
                         str(state_path),
                         "--output-json",
@@ -145,11 +151,13 @@ class TestCtMonitorCli:
             assert "Summary:" in result.output
             assert "new=2" in result.output
             assert "wildcard=1" in result.output
+            assert captured_domains == ["paypal.com"]
 
             saved_state = load_ct_state(state_path)
             assert {100, 101, 102, 103}.issubset(saved_state)
 
             payload = json.loads(Path("alerts.json").read_text(encoding="utf-8"))
+            assert payload["brand_domain"] == "paypal.com"
             assert payload["lookalike_certificates"] == 2
             assert len(payload["new_registration_alerts"]) == 2
             assert len(payload["wildcard_alerts"]) == 1
@@ -174,3 +182,12 @@ class TestCtMonitorCli:
                 cli_main_module.query_ct_logs = original_query_cli
 
             assert result.exit_code == 1
+
+    def test_ct_monitor_rejects_invalid_brand_domain(self) -> None:
+        from cli.main import cli as main_cli
+
+        runner = CliRunner()
+        result = runner.invoke(main_cli, ["ct-monitor", "https://brand.com/login"])
+
+        assert result.exit_code == 2
+        assert "hostname without URL components" in result.output

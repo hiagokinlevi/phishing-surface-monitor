@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Iterable
 
 from analyzers.ct_monitor import CtCertificate, filter_lookalikes
+from analyzers.hostname_validation import normalize_hostname
 
 
 CRITICAL = "critical"
@@ -29,7 +30,8 @@ def _now_utc() -> datetime:
 
 def _brand_keywords(brand_domain: str) -> set[str]:
     """Extrai palavras-chave do domínio para avaliação de risco."""
-    labels = [label.strip().lower() for label in brand_domain.split(".") if label.strip()]
+    normalized_brand_domain = normalize_hostname(brand_domain)
+    labels = [label.strip().lower() for label in normalized_brand_domain.split(".") if label.strip()]
     if not labels:
         return set()
     head = labels[0]
@@ -121,8 +123,9 @@ def save_ct_state(
     """Persiste estado de monitoramento para comparação em execuções futuras."""
     path = Path(state_file)
     path.parent.mkdir(parents=True, exist_ok=True)
+    normalized_brand_domain = normalize_hostname(brand_domain)
     payload = {
-        "brand_domain": brand_domain,
+        "brand_domain": normalized_brand_domain,
         "checked_at": (checked_at or _now_utc()).isoformat(),
         "known_certificate_ids": sorted({int(cid) for cid in known_certificate_ids}),
     }
@@ -162,7 +165,8 @@ def detect_wildcard_certificate_alerts(
     brand_domain: str,
 ) -> list[CtAlert]:
     """Detecta certificados wildcard com potencial de abuso de marca."""
-    keywords = _brand_keywords(brand_domain)
+    normalized_brand_domain = normalize_hostname(brand_domain)
+    keywords = _brand_keywords(normalized_brand_domain)
     alerts: list[CtAlert] = []
     for cert in certs:
         cn = cert.common_name.lower().strip()
@@ -181,7 +185,7 @@ def detect_wildcard_certificate_alerts(
                 logged_at=cert.logged_at,
                 message=(
                     "Wildcard certificate observed; review for potential impersonation "
-                    f"risk against brand '{brand_domain}'."
+                    f"risk against brand '{normalized_brand_domain}'."
                 ),
             )
         )
@@ -195,9 +199,10 @@ def evaluate_ct_alerts(
     known_certificate_ids: set[int],
 ) -> CtAlertBatch:
     """Executa avaliação completa de alertas para um lote CT."""
-    lookalike_certs = filter_lookalikes(certs, brand_domain=brand_domain)
+    normalized_brand_domain = normalize_hostname(brand_domain)
+    lookalike_certs = filter_lookalikes(certs, brand_domain=normalized_brand_domain)
     return CtAlertBatch(
-        brand_domain=brand_domain,
+        brand_domain=normalized_brand_domain,
         total_certificates=len(certs),
         lookalike_certificates=len(lookalike_certs),
         new_registration_alerts=detect_new_certificate_alerts(
@@ -206,7 +211,7 @@ def evaluate_ct_alerts(
         ),
         wildcard_alerts=detect_wildcard_certificate_alerts(
             lookalike_certs,
-            brand_domain=brand_domain,
+            brand_domain=normalized_brand_domain,
         ),
     )
 
