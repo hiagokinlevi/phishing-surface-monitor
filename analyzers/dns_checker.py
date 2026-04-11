@@ -27,6 +27,10 @@ def check_dns(domain: str, timeout: float = 3.0) -> DnsResult:
     Returns:
         DnsResult with resolution status and A records.
     """
+    if timeout <= 0:
+        raise ValueError("timeout must be greater than 0")
+
+    previous_timeout = socket.getdefaulttimeout()
     socket.setdefaulttimeout(timeout)
     try:
         info = socket.getaddrinfo(domain, None, socket.AF_INET)
@@ -34,3 +38,5 @@ def check_dns(domain: str, timeout: float = 3.0) -> DnsResult:
         return DnsResult(domain=domain, resolves=True, a_records=a_records)
     except (socket.gaierror, socket.timeout, OSError):
         return DnsResult(domain=domain, resolves=False, a_records=[])
+    finally:
+        socket.setdefaulttimeout(previous_timeout)
