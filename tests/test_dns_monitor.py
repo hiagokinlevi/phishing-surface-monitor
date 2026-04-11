@@ -154,11 +154,20 @@ class TestIsSuspiciousSubdomain:
     def test_known_prefix_webmail(self):
         assert _is_suspicious_subdomain("webmail") is True
 
+    def test_hyphenated_label_with_suspicious_token(self):
+        assert _is_suspicious_subdomain("login-secure") is True
+
+    def test_underscore_label_with_suspicious_token(self):
+        assert _is_suspicious_subdomain("secure_update") is True
+
     def test_benign_label(self):
         assert _is_suspicious_subdomain("www") is False
 
     def test_benign_label_blog(self):
         assert _is_suspicious_subdomain("blog") is False
+
+    def test_partial_token_match_is_not_suspicious(self):
+        assert _is_suspicious_subdomain("blogin") is False
 
     def test_dga_high_entropy_with_digit(self):
         # Starts with digit; 10 unique chars → entropy ≈ 3.32 > 3.2
@@ -793,6 +802,14 @@ class TestCheck007SuspiciousSubdomain:
         base = make_snapshot({})
         curr = DnsSnapshot(domain=DOMAIN, captured_at=1.0, records=[
             DnsRecord("A", "account.example.com", "1.2.3.4"),
+        ])
+        result = monitor.compare(base, curr)
+        assert "DNS-MON-007" in ids_in(result)
+
+    def test_hyphenated_lure_subdomain_triggers_007(self, monitor):
+        base = make_snapshot({})
+        curr = DnsSnapshot(domain=DOMAIN, captured_at=1.0, records=[
+            DnsRecord("A", "login-secure.example.com", "1.2.3.4"),
         ])
         result = monitor.compare(base, curr)
         assert "DNS-MON-007" in ids_in(result)

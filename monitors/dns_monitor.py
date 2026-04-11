@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import math
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
@@ -101,8 +102,12 @@ def _is_suspicious_subdomain(label: str) -> bool:
     # Use only the leftmost label for single-label checks
     leftmost = label.split(".")[0]
 
-    # Explicit suspicious-prefix list (DNS-MON-007 spec)
-    if leftmost in _SUSPICIOUS_PREFIXES:
+    # Explicit suspicious-prefix list (DNS-MON-007 spec). Attackers often
+    # combine multiple lure words in one label, e.g. "login-secure", so we
+    # match complete hyphen/underscore-delimited tokens rather than requiring
+    # the entire label to equal a single prefix.
+    tokens = [token for token in re.split(r"[-_]+", leftmost) if token]
+    if any(token in _SUSPICIOUS_PREFIXES for token in tokens):
         return True
 
     # DGA heuristic: digits at start or end AND high entropy
