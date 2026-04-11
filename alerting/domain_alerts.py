@@ -29,7 +29,9 @@ Always test with dry_run=True before wiring into production pipelines.
 from __future__ import annotations
 
 import json
+from ipaddress import ip_address
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Optional
@@ -88,6 +90,9 @@ class DomainAlertConfig:
                             Findings below this threshold are filtered out.
         source_label:       Optional label for the source system.
         timeout_seconds:    HTTP request timeout in seconds.
+        allow_insecure_http:
+                            When True, permit plain HTTP for non-production
+                            lab endpoints. Defaults to False.
     """
 
     url: str
@@ -96,6 +101,7 @@ class DomainAlertConfig:
     severity_threshold: str = "high"
     source_label: str = "phishing-surface-monitor"
     timeout_seconds: int = 10
+    allow_insecure_http: bool = False
 
     def meets_threshold(self, finding: BrandFinding) -> bool:
         """Return True if the finding's risk level meets the alert threshold."""
@@ -297,6 +303,47 @@ def build_generic_payload(
 # HTTP sender
 # ---------------------------------------------------------------------------
 
+def _validate_webhook_url(url: str, *, allow_insecure_http: bool) -> None:
+    """
+    Reject obviously unsafe live-send destinations before opening a socket.
+
+    This keeps production alerts from being redirected to non-HTTP schemes,
+    plaintext HTTP endpoints by default, or explicit localhost/private IP
+    targets that create an avoidable SSRF path.
+    """
+    parsed = urllib.parse.urlparse(url.strip())
+    scheme = parsed.scheme.lower()
+
+    if scheme not in {"http", "https"}:
+        raise ValueError("Webhook URL must use http or https.")
+
+    if scheme != "https" and not allow_insecure_http:
+        raise ValueError("Webhook URL must use https unless allow_insecure_http=True.")
+
+    host = parsed.hostname
+    if not host:
+        raise ValueError("Webhook URL must include a hostname.")
+
+    normalized_host = host.rstrip(".").lower()
+    if normalized_host == "localhost" or normalized_host.endswith(".localhost"):
+        raise ValueError("Webhook URL cannot target localhost.")
+
+    try:
+        addr = ip_address(normalized_host)
+    except ValueError:
+        return
+
+    if (
+        addr.is_private
+        or addr.is_loopback
+        or addr.is_link_local
+        or addr.is_reserved
+        or addr.is_unspecified
+        or addr.is_multicast
+    ):
+        raise ValueError("Webhook URL cannot target a local or reserved IP address.")
+
+
 def _post_json(url: str, payload: dict, timeout: int) -> int:
     """
     POST JSON payload to a URL.  Returns the HTTP status code.
@@ -370,6 +417,10 @@ def send_domain_alert(
 
     # Send HTTP request
     try:
+        _validate_webhook_url(
+            config.url,
+            allow_insecure_http=config.allow_insecure_http,
+        )
         status = _post_json(config.url, payload, timeout=config.timeout_seconds)
         success = 200 <= status < 300
         return DomainAlertResult(

@@ -458,3 +458,41 @@ class TestSendDomainAlert:
         )
         result = send_domain_alert([_finding()], cfg, dry_run=True)
         assert "blocks" in result.payload_preview
+
+    def test_live_send_rejects_insecure_http_by_default(self):
+        cfg = DomainAlertConfig(
+            url="http://hooks.example.com/ingest",
+            brand_domain="example.com",
+            channel="generic",
+        )
+        with patch("alerting.domain_alerts._post_json") as mock_post:
+            result = send_domain_alert([_finding()], cfg, dry_run=False)
+        assert result.success is False
+        assert "https" in (result.error or "")
+        mock_post.assert_not_called()
+
+    def test_live_send_allows_opt_in_http_for_lab_endpoint(self):
+        cfg = DomainAlertConfig(
+            url="http://hooks.example.com/ingest",
+            brand_domain="example.com",
+            channel="generic",
+            allow_insecure_http=True,
+        )
+        with patch("alerting.domain_alerts._post_json", return_value=202) as mock_post:
+            result = send_domain_alert([_finding()], cfg, dry_run=False)
+        assert result.success is True
+        assert result.http_status == 202
+        mock_post.assert_called_once()
+
+    def test_live_send_rejects_localhost_even_with_http_opt_in(self):
+        cfg = DomainAlertConfig(
+            url="http://127.0.0.1:9000/ingest",
+            brand_domain="example.com",
+            channel="generic",
+            allow_insecure_http=True,
+        )
+        with patch("alerting.domain_alerts._post_json") as mock_post:
+            result = send_domain_alert([_finding()], cfg, dry_run=False)
+        assert result.success is False
+        assert "local or reserved IP" in (result.error or "")
+        mock_post.assert_not_called()
