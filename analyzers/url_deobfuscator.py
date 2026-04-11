@@ -228,6 +228,66 @@ def _is_nonstandard_ip(hostname: str) -> bool:
 _DOUBLE_ENC_RE = re.compile(r"%25[0-9a-fA-F]{2}", re.IGNORECASE)
 
 
+def _looks_like_schemeless_authority(url: str) -> bool:
+    """
+    Return True when a scheme-less string still looks like it starts with an
+    authority section (host or userinfo@host) rather than an arbitrary path.
+
+    ``urllib.parse.urlparse`` only treats the leading token as a netloc when
+    the input includes ``//``. Many analyst-provided indicators omit the
+    scheme, so a value such as ``user:pass@evil.com/login`` would otherwise be
+    parsed as a custom scheme plus path and silently miss hostname checks.
+    """
+    stripped = url.lstrip()
+    if not stripped or stripped.startswith(("/", "?", "#")):
+        return False
+    if stripped.startswith("//"):
+        return True
+
+    boundary = len(stripped)
+    for delim in "/?#":
+        idx = stripped.find(delim)
+        if idx != -1:
+            boundary = min(boundary, idx)
+
+    # A bare token such as ``mailto:user@example.com`` should not be reparsed
+    # as authority-bearing input. We only reinterpret values that continue into
+    # a path/query/fragment, which is how scheme-less phishing URLs are
+    # typically shared in triage notes.
+    if boundary == len(stripped):
+        return False
+
+    candidate = urllib.parse.urlparse(f"//{stripped}")
+    hostname = candidate.hostname or ""
+    if not hostname:
+        return False
+
+    return (
+        "." in hostname
+        or "%" in candidate.netloc
+        or _is_nonstandard_ip(hostname)
+        or hostname.startswith("xn--")
+        or any(ord(ch) > 127 for ch in hostname)
+        or ("@" in candidate.netloc and stripped[boundary] == "/")
+    )
+
+
+def _parse_url(url: str) -> urllib.parse.ParseResult:
+    """
+    Parse a URL while recovering common scheme-less indicators.
+
+    The primary parse is preserved whenever it already exposes a hostname or
+    when the input does not look authority-bearing.
+    """
+    parsed = urllib.parse.urlparse(url)
+    if parsed.netloc or parsed.hostname or not _looks_like_schemeless_authority(url):
+        return parsed
+    reparsed = urllib.parse.urlparse(f"//{url.lstrip()}")
+    if reparsed.netloc or reparsed.hostname:
+        return reparsed
+    return parsed
+
+
 def _check_urlo001(hostname: str) -> Optional[URLOFinding]:
     """URLO-001: Percent-encoded characters in hostname."""
     if "%" not in hostname:
@@ -396,7 +456,7 @@ def analyze(url: str) -> URLOResult:
     decoded_url = urllib.parse.unquote(url)
 
     # Parse the URL; be lenient so that unusual schemes (data:) still parse
-    parsed = urllib.parse.urlparse(url)
+    parsed = _parse_url(url)
 
     # Normalise the hostname — strip brackets from IPv6 literals
     hostname: str = parsed.hostname or ""  # .hostname is already lowercased

@@ -168,6 +168,10 @@ class TestURLO001:
         r = analyze("http://%65xAmPle.com/")
         assert _has(r, "URLO-001")
 
+    def test_schemeless_encoded_hostname_with_path(self):
+        r = analyze("%67%6f%6f%67%6c%65.com/login")
+        assert _has(r, "URLO-001")
+
     def test_finding_detail_mentions_hostname(self):
         r = analyze("http://%67%6f%6f%67%6c%65.com/")
         finding = next(f for f in r.findings if f.check_id == "URLO-001")
@@ -251,6 +255,10 @@ class TestURLO003:
 
     def test_hex_integer_ip_partial(self):
         r = analyze("http://0xC0A80101/")  # 192.168.1.1 in hex
+        assert _has(r, "URLO-003")
+
+    def test_schemeless_hex_integer_ip_with_path(self):
+        r = analyze("0x7f000001/admin")
         assert _has(r, "URLO-003")
 
     # -- Dotted hex IP --
@@ -502,6 +510,14 @@ class TestURLO007:
         r = analyze("https://user:secretpass@secure.example.com/account")
         assert _has(r, "URLO-007")
 
+    def test_schemeless_credentials_with_password(self):
+        r = analyze("user:pass@evil.example/login")
+        assert _has(r, "URLO-007")
+
+    def test_schemeless_credentials_with_username_only(self):
+        r = analyze("admin@evil.example/login")
+        assert _has(r, "URLO-007")
+
     def test_no_credentials_no_urlo007(self):
         r = analyze("https://example.com/login?user=admin")
         assert not _has(r, "URLO-007")
@@ -530,6 +546,10 @@ class TestURLO007:
     def test_special_chars_in_credentials(self):
         r = analyze("https://us%40r:p%40ss@example.com/")
         assert _has(r, "URLO-007")
+
+    def test_mailto_address_does_not_trigger_urlo007(self):
+        r = analyze("mailto:user@example.com")
+        assert not _has(r, "URLO-007")
 
 
 # ===========================================================================
