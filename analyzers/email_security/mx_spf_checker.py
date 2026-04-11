@@ -8,6 +8,9 @@ never sends mail or probes remote services.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import isfinite
+import ipaddress
+import re
 from typing import Optional, Sequence
 
 
@@ -21,6 +24,8 @@ DEFAULT_DKIM_SELECTORS: tuple[str, ...] = (
     "smtp",
     "dkim",
 )
+
+_DNS_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", re.IGNORECASE)
 
 _SEVERITY_ORDER = {
     "CRITICAL": 4,
@@ -184,6 +189,83 @@ def _lookup_dkim_records(
     return discovered
 
 
+def _normalize_domain(domain: str) -> str:
+    """Normalize a domain and reject URL-like or invalid host input."""
+    candidate = domain.strip().rstrip(".").lower()
+    if not candidate:
+        raise ValueError("domain must be a non-empty hostname")
+    if any(separator in candidate for separator in ("://", "/", "?", "#", "@")):
+        raise ValueError("domain must be a hostname without URL components")
+    if ".." in candidate:
+        raise ValueError("domain must not contain empty labels")
+
+    try:
+        ipaddress.ip_address(candidate)
+    except ValueError:
+        pass
+    else:
+        raise ValueError("domain must be a hostname, not an IP address")
+
+    try:
+        ascii_candidate = candidate.encode("idna").decode("ascii")
+    except UnicodeError as exc:
+        raise ValueError("domain contains invalid IDNA characters") from exc
+
+    if len(ascii_candidate) > 253:
+        raise ValueError("domain must be 253 characters or fewer")
+
+    labels = ascii_candidate.split(".")
+    if any(not label for label in labels):
+        raise ValueError("domain must not contain empty labels")
+    if any(len(label) > 63 for label in labels):
+        raise ValueError("domain labels must be 63 characters or fewer")
+    if any(_DNS_LABEL_RE.fullmatch(label) is None for label in labels):
+        raise ValueError("domain contains invalid hostname characters")
+    return ascii_candidate
+
+
+def _normalize_selector(selector: str) -> str:
+    """Normalize a DKIM selector and reject invalid DNS-label input."""
+    candidate = selector.strip().rstrip(".").lower()
+    if not candidate:
+        raise ValueError("DKIM selector must be a non-empty DNS label")
+    if any(separator in candidate for separator in ("://", "/", "?", "#", "@")):
+        raise ValueError("DKIM selector must be a DNS label without URL components")
+    if "." in candidate:
+        raise ValueError("DKIM selector must be a single DNS label")
+
+    try:
+        ascii_candidate = candidate.encode("idna").decode("ascii")
+    except UnicodeError as exc:
+        raise ValueError("DKIM selector contains invalid IDNA characters") from exc
+
+    if len(ascii_candidate) > 63:
+        raise ValueError("DKIM selector must be 63 characters or fewer")
+    if _DNS_LABEL_RE.fullmatch(ascii_candidate) is None:
+        raise ValueError("DKIM selector contains invalid hostname characters")
+    return ascii_candidate
+
+
+def _normalize_selector_list(selectors: Sequence[str]) -> list[str]:
+    """Normalize selectors while preserving order and removing duplicates."""
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for selector in selectors:
+        canonical = _normalize_selector(selector)
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        normalized.append(canonical)
+    return normalized
+
+
+def _validate_timeout(timeout: float) -> float:
+    """Reject non-finite or non-positive DNS resolver lifetimes."""
+    if not isfinite(timeout) or timeout <= 0:
+        raise ValueError("timeout must be a finite number greater than 0")
+    return timeout
+
+
 def _build_gaps(posture: EmailPosture) -> list[EmailGap]:
     gaps: list[EmailGap] = []
 
@@ -258,23 +340,25 @@ def check_email_posture(
     The DKIM check is heuristic-based: it tests a caller-provided selector list
     or a curated default set of commonly observed selectors.
     """
-    selectors = list(dkim_selectors or DEFAULT_DKIM_SELECTORS)
+    normalized_domain = _normalize_domain(domain)
+    validated_timeout = _validate_timeout(timeout)
+    selectors = _normalize_selector_list(dkim_selectors or DEFAULT_DKIM_SELECTORS)
     posture = EmailPosture(
-        domain=domain,
+        domain=normalized_domain,
         has_mx=False,
         tested_dkim_selectors=selectors,
     )
 
-    mx_records = _mx_lookup(domain, timeout)
+    mx_records = _mx_lookup(normalized_domain, validated_timeout)
     posture.has_mx = bool(mx_records)
     posture.mx_records = mx_records
 
-    txt_records = _txt_lookup(domain, timeout)
+    txt_records = _txt_lookup(normalized_domain, validated_timeout)
     posture.spf_record = _extract_matching_record(txt_records, "v=spf1")
 
-    dmarc_records = _txt_lookup(f"_dmarc.{domain}", timeout)
+    dmarc_records = _txt_lookup(f"_dmarc.{normalized_domain}", validated_timeout)
     posture.dmarc_record = _extract_matching_record(dmarc_records, "v=dmarc1")
 
-    posture.dkim_records = _lookup_dkim_records(domain, selectors, timeout)
+    posture.dkim_records = _lookup_dkim_records(normalized_domain, selectors, validated_timeout)
     posture.gaps = _build_gaps(posture)
     return posture

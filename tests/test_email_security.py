@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from click.testing import CliRunner
+import pytest
 
 from analyzers.email_security import mx_spf_checker
 from analyzers.email_security.mx_spf_checker import (
@@ -70,6 +71,40 @@ class TestEmailPostureModel:
 
 
 class TestEmailPostureLookups:
+    def test_check_email_posture_normalizes_domain_and_selectors(self, monkeypatch) -> None:
+        lookup_calls: list[tuple[str, float]] = []
+
+        monkeypatch.setattr(
+            mx_spf_checker,
+            "_mx_lookup",
+            lambda domain, timeout=3.0: lookup_calls.append((domain, timeout)) or ["mx1.example.com"],
+        )
+
+        def fake_txt_lookup(domain: str, timeout: float = 3.0) -> list[str]:
+            lookup_calls.append((domain, timeout))
+            if domain == "xn--exmple-cua.com":
+                return ["v=spf1 -all"]
+            if domain == "_dmarc.xn--exmple-cua.com":
+                return ["v=DMARC1; p=reject"]
+            if domain == "default._domainkey.xn--exmple-cua.com":
+                return ["v=DKIM1; p=abc"]
+            return []
+
+        monkeypatch.setattr(mx_spf_checker, "_txt_lookup", fake_txt_lookup)
+
+        posture = check_email_posture(
+            " Exämple.com. ",
+            timeout=1.5,
+            dkim_selectors=[" Default. ", "selector1", "DEFAULT"],
+        )
+
+        assert posture.domain == "xn--exmple-cua.com"
+        assert posture.tested_dkim_selectors == ["default", "selector1"]
+        assert posture.dkim_records == {"default": "v=DKIM1; p=abc"}
+        assert lookup_calls[0] == ("xn--exmple-cua.com", 1.5)
+        assert ("_dmarc.xn--exmple-cua.com", 1.5) in lookup_calls
+        assert ("default._domainkey.xn--exmple-cua.com", 1.5) in lookup_calls
+
     def test_check_email_posture_uses_default_selectors(self, monkeypatch) -> None:
         txt_records = {
             "example.com": ["v=spf1 include:spf.example.net ~all"],
@@ -94,6 +129,31 @@ class TestEmailPostureLookups:
         assert posture.dmarc_posture == "none"
         assert posture.dkim_records == {"default": "v=DKIM1; p=abc"}
         assert posture.tested_dkim_selectors == list(DEFAULT_DKIM_SELECTORS)
+
+    def test_check_email_posture_rejects_invalid_domain(self) -> None:
+        with pytest.raises(ValueError, match="without URL components"):
+            check_email_posture("https://example.com/login")
+
+    @pytest.mark.parametrize("timeout", [0, -1.0, float("inf"), float("nan")])
+    def test_check_email_posture_rejects_invalid_timeout(self, timeout: float) -> None:
+        with pytest.raises(ValueError, match="finite number greater than 0"):
+            check_email_posture("example.com", timeout=timeout)
+
+    @pytest.mark.parametrize(
+        ("selectors", "message"),
+        [
+            ([""], "non-empty DNS label"),
+            (["bad.selector"], "single DNS label"),
+            (["selector/path"], "without URL components"),
+        ],
+    )
+    def test_check_email_posture_rejects_invalid_selectors(
+        self,
+        selectors: list[str],
+        message: str,
+    ) -> None:
+        with pytest.raises(ValueError, match=message):
+            check_email_posture("example.com", dkim_selectors=selectors)
 
 
 class TestEmailPostureCli:
