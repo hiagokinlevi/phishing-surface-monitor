@@ -26,3 +26,6 @@
 - [x] Offline URL obfuscation and redirect triage CLI
 - [x] JSON output for suspicious-link evidence handoff
 - [x] CI-friendly `--fail-on-suspicious` gate for analyst queues
+
+## Automated Completions
+- [x] Initialize CLI entrypoint (cycle 1)
