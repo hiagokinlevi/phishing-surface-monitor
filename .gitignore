@@ -1,0 +1,12 @@
+# Runtime / test artifacts
+.coverage
+.pytest_cache/
+.ruff_cache/
+
+# Python artifacts
+__pycache__/
+**/__pycache__/
+*.py[cod]
+
+# Local publish queue + results (Codex automation publisher)
+publish-bridge/
