@@ -31,3 +31,4 @@
 - [x] Initialize CLI entrypoint (cycle 1)
 - [x] Implement DMARC record lookup (cycle 17)
 - [x] Add simple risk scoring function (cycle 18)
+- [x] Generate JSON monitoring report (cycle 19)
