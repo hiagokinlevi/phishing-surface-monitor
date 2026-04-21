@@ -2,97 +2,65 @@
 
 Defensive brand protection toolkit for monitoring domains, detecting typosquatting, and organizing evidence for authorized takedown processes.
 
-## Objective
+## Purpose
 
-Help security teams identify domains that may be impersonating their brand through typosquatting, lookalike names, or suspicious registration patterns — using only public metadata and authorized monitoring.
+This tool helps security teams detect potential brand impersonation using public signals (domain similarity, DNS posture, CT logs, and email authentication records), then generate evidence-ready outputs for analyst triage and response.
 
-## Problem Solved
+## Installation Requirements
 
-Security teams need systematic ways to monitor for brand impersonation without expensive commercial tools. This toolkit provides algorithms for similarity scoring, domain watchlists, case management, and evidence templates for institutional response.
+- Python 3.10+
+- `pip`
+- Network access for DNS/CT lookups
 
-## Use Cases
-
-- Monitoring a brand's domain watchlist for new suspicious registrations
-- Scoring similarity between observed domains and legitimate brand assets
-- Monitoring CT logs for new lookalike certificate registrations
-- Detecting wildcard certificates that may indicate broad phishing infrastructure
-- Analyzing lookalike domains for email abuse posture across MX, SPF, DKIM, and DMARC
-- Triage of suspicious phishing links for URL obfuscation, nested redirects, data URIs, encoded hosts, and embedded credentials
-- Organizing evidence for authorized takedown requests, including registrar and ICANN templates
-- Tracking takedown case status across triage, review, submission, and monitoring
-- Training analysts to recognize typosquatting patterns
-- Generating reports on brand surface exposure
-
-## Ethical Disclaimer
-
-This toolkit is for authorized, defensive brand protection only. Do not use it to monitor organizations you have no relationship with. Do not interact invasively with suspected fraudulent infrastructure. All collection must comply with applicable laws and organizational policies.
-
-## Structure
-
-```
-analyzers/      — Typosquatting detection, similarity scoring, CT alerting
-monitors/       — DNS, certificate abuse, and takeover monitoring modules
-schemas/        — Case and finding schemas
-reports/        — Report generators
-cli/            — Command-line interface
-training/       — Tutorials and labs
-docs/           — Methodology and governance guides
-```
-
-## How to Run
+Install locally:
 
 ```bash
-python3 -m venv .venv --system-site-packages
+python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install --no-build-isolation --no-deps -e .
+python -m pip install -U pip
+python -m pip install -e .
+```
 
-# Run a typosquatting + DNS surface scan
+(Optional) configure environment defaults:
+
+```bash
+cp .env.example .env
+```
+
+## Usage Examples
+
+### 1) Typosquat scanning
+
+```bash
+phishing-monitor scan example.com --threshold 0.75
+```
+
+With report outputs:
+
+```bash
 phishing-monitor scan example.com --threshold 0.75 --report --json-report
-
-# Monitor CT logs for new registrations and wildcard alerts
-phishing-monitor ct-monitor example.com --output-json reports-output/example_ct_alerts.json
-
-# Analyze likely lookalike domains for email-receiving and spoofing gaps
-phishing-monitor email-posture example.com --output-json reports-output/example_email_posture.json
-
-# Triage suspicious phishing links without DNS or HTTP requests
-phishing-monitor url-triage \
-  'http://user:pass@0x7f000001/login?next=https://evil.test' \
-  --output-json reports-output/url_triage.json \
-  --fail-on-suspicious
-
-# Build a takedown case bundle from a JSON finding set
-phishing-monitor takedown-case create example.com \
-  --findings-json reports-output/example_com_report.json \
-  --output-dir case-output \
-  --registrar-name "Example Registrar" \
-  --registrar-abuse-email abuse@example-registrar.test
 ```
 
-`email-posture` can also inspect explicit candidates and custom DKIM selectors:
+### 2) CT log checks
 
 ```bash
-phishing-monitor email-posture example.com login-example.net secure-example.org --selector default --selector selector1
+phishing-monitor ct-monitor example.com
 ```
 
-`url-triage` can also read newline-delimited URL files:
+### 3) DMARC lookup
 
 ```bash
-phishing-monitor url-triage --input-file suspicious-urls.txt --output-json reports-output/url_triage.json
+phishing-monitor dmarc-check suspicious-example.net
 ```
 
-The URL triage path is fully offline. It does not resolve DNS, open HTTP
-connections, or fetch suspected phishing pages; it only parses the provided
-strings and reports obfuscation signals.
+### 4) Report generation
 
-The offline-safe install above assumes a workstation that already has the shared
-Python tooling used across the Cyber Port repos. If you have internet access and
-prefer isolated dependency resolution, `python -m pip install -e ".[dev]"`
-remains supported.
+Generate Markdown + JSON artifacts from scan results:
 
-If `rich` is unavailable, the CLI falls back to plain-text output so offline
-editable installs still work for help paths and automation runs.
+```bash
+phishing-monitor scan example.com --report --json-report
+```
 
-## License
+## Ethical Use
 
-MIT — see [LICENSE](LICENSE).
+Authorized, defensive use only. Do not run monitoring against organizations you do not own or explicitly protect. Follow applicable laws, contracts, and internal policy.
