@@ -36,3 +36,4 @@
 - [x] Add basic logging utility (cycle 21)
 - [x] Add takedown evidence bundle generator (cycle 22)
 - [x] Create minimal README with usage examples (cycle 23)
+- [x] Add IDN/Punycode normalization before similarity scoring (cycle 24)
