@@ -38,3 +38,4 @@
 - [x] Create minimal README with usage examples (cycle 23)
 - [x] Add IDN/Punycode normalization before similarity scoring (cycle 24)
 - [x] Add --min-risk CLI filter for scan output (cycle 25)
+- [x] Registrar abuse contact extraction utility (cycle 26)
