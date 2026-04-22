@@ -37,3 +37,4 @@
 - [x] Add takedown evidence bundle generator (cycle 22)
 - [x] Create minimal README with usage examples (cycle 23)
 - [x] Add IDN/Punycode normalization before similarity scoring (cycle 24)
+- [x] Add --min-risk CLI filter for scan output (cycle 25)
