@@ -39,3 +39,4 @@
 - [x] Add IDN/Punycode normalization before similarity scoring (cycle 24)
 - [x] Add --min-risk CLI filter for scan output (cycle 25)
 - [x] Registrar abuse contact extraction utility (cycle 26)
+- [x] CT monitor dedup cache by certificate fingerprint/domain pair (cycle 27)
