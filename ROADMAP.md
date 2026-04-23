@@ -40,3 +40,4 @@
 - [x] Add --min-risk CLI filter for scan output (cycle 25)
 - [x] Registrar abuse contact extraction utility (cycle 26)
 - [x] CT monitor dedup cache by certificate fingerprint/domain pair (cycle 27)
+- [x] Add JSON schema validation step before report write (cycle 28)
