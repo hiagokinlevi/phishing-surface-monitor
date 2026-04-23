@@ -1,58 +1,49 @@
-"""
-Brand monitoring report generator.
-
-Produces Markdown and JSON reports from a list of BrandFindings.
-"""
 from __future__ import annotations
+
 import json
-from datetime import datetime, timezone
-from schemas.case import BrandFinding, RiskLevel
+from pathlib import Path
+from typing import Any
 
 
-def generate_markdown_report(findings: list[BrandFinding], brand_domain: str) -> str:
-    """
-    Generate a Markdown brand monitoring report.
-
-    Args:
-        findings:     List of BrandFinding objects to include.
-        brand_domain: The monitored brand domain.
-
-    Returns:
-        Markdown string.
-    """
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    total = len(findings)
-    active = [f for f in findings if f.resolves]
-
-    lines = [
-        f"# Brand Monitoring Report — {brand_domain}",
-        f"\n**Generated:** {now}  ",
-        f"**Total lookalike candidates:** {total}  ",
-        f"**Actively resolving:** {len(active)}\n",
-        "---\n",
-    ]
-
-    for level in RiskLevel:
-        bucket = [f for f in findings if f.risk_level == level]
-        if not bucket:
-            continue
-        lines.append(f"## {level.value.upper()} ({len(bucket)})\n")
-        for f in sorted(bucket, key=lambda x: x.similarity_score, reverse=True):
-            resolves_str = "✓ resolves" if f.resolves else "✗ no DNS"
-            lines.append(f"- **{f.lookalike_domain}** — similarity {f.similarity_score:.2f} — {resolves_str} — technique: {f.technique}\n")
-        lines.append("\n")
-
-    return "".join(lines)
+class ReportValidationError(ValueError):
+    """Raised when a report payload does not match its JSON schema."""
 
 
-def generate_json_report(findings: list[BrandFinding]) -> str:
-    """
-    Serialize a list of BrandFinding objects to a JSON string.
+def _load_schema(schema_name: str) -> dict[str, Any]:
+    schema_path = Path(__file__).resolve().parent.parent / "schemas" / schema_name
+    with schema_path.open("r", encoding="utf-8") as f:
+        return json.load(f)
 
-    Args:
-        findings: List of BrandFinding objects.
 
-    Returns:
-        Pretty-printed JSON string.
-    """
-    return json.dumps([f.model_dump(mode="json") for f in findings], indent=2)
+def _validate_required_fields(payload: dict[str, Any], schema: dict[str, Any], schema_name: str) -> None:
+    required = schema.get("required", [])
+    missing = [field for field in required if field not in payload or payload.get(field) is None]
+    if missing:
+        raise ReportValidationError(
+            f"Invalid report payload for {schema_name}: missing required field(s): {', '.join(missing)}"
+        )
+
+
+def _validate_payload(payload: dict[str, Any], schema_name: str) -> None:
+    schema = _load_schema(schema_name)
+    _validate_required_fields(payload, schema, schema_name)
+
+
+def write_case_json_report(payload: dict[str, Any], output_path: str | Path) -> Path:
+    _validate_payload(payload, "case.schema.json")
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    return out
+
+
+def write_finding_json_report(payload: dict[str, Any], output_path: str | Path) -> Path:
+    _validate_payload(payload, "finding.schema.json")
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    return out
