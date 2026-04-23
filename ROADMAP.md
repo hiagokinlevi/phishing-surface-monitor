@@ -42,3 +42,4 @@
 - [x] CT monitor dedup cache by certificate fingerprint/domain pair (cycle 27)
 - [x] Add JSON schema validation step before report write (cycle 28)
 - [x] Expose suspicious URL reason codes in link triage summary table (cycle 29)
+- [x] Add timeout and retries to crt.sh CT polling requests (cycle 30)
