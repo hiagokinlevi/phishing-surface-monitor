@@ -43,4 +43,4 @@
 - [x] Add JSON schema validation step before report write (cycle 28)
 - [x] Expose suspicious URL reason codes in link triage summary table (cycle 29)
 - [x] Add timeout and r
-- [x] Add `--since-hours` filter to CT monitor output (cycle 32)
+- [x] Add `--output-dir` option for report file placement (cycle 33)
