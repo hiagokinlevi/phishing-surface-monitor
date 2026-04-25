@@ -1,94 +1,85 @@
 import argparse
-import json
-from datetime import datetime
-
-from analyzers.domain_analyzer import analyze_domain_candidates
-from reports.markdown_report import generate_markdown_report
-from reports.json_report import generate_json_report
+from analyzers.typosquat import run_scan
+from reports.generator import write_markdown_report, write_json_report
 
 
-def _print_scan_results(results):
-    if not results:
-        print("No candidates found.")
+def _risk_rank(risk: str) -> int:
+    order = {
+        "critical": 4,
+        "high": 3,
+        "medium": 2,
+        "low": 1,
+        "benign": 0,
+    }
+    return order.get((risk or "").strip().lower(), -1)
+
+
+def _print_scan_results(results, min_risk=None, hide_benign=False, top=None):
+    filtered = list(results)
+
+    if min_risk:
+        threshold = _risk_rank(min_risk)
+        filtered = [r for r in filtered if _risk_rank(r.get("risk_level")) >= threshold]
+
+    if hide_benign:
+        filtered = [
+            r for r in filtered if (r.get("risk_level") or "").strip().lower() not in {"low", "benign"}
+        ]
+
+    filtered.sort(key=lambda r: _risk_rank(r.get("risk_level")), reverse=True)
+
+    if top is not None:
+        filtered = filtered[:top]
+
+    if not filtered:
+        print("No findings to display with current output filters.")
         return
 
-    for r in results:
-        domain = r.get("domain", "")
-        score = r.get("risk_score", 0)
-        risk = r.get("risk_level", "unknown")
-        similarity = r.get("similarity", 0)
-        dns_resolves = r.get("dns_resolves", False)
+    print("domain\trisk\tsimilarity\tresolves")
+    for item in filtered:
         print(
-            f"{domain:35} risk={score:.2f} level={risk:8} similarity={similarity:.2f} dns={dns_resolves}"
+            f"{item.get('domain')}\t{item.get('risk_level')}\t{item.get('similarity')}\t{item.get('resolves')}"
         )
-
-
-def handle_scan(args):
-    results = analyze_domain_candidates(
-        target_domain=args.domain,
-        threshold=args.threshold,
-        min_risk=args.min_risk,
-    )
-
-    # Ensure highest-risk-first ordering before applying top limit.
-    results = sorted(results, key=lambda x: x.get("risk_score", 0), reverse=True)
-
-    if args.top is not None:
-        results = results[: args.top]
-
-    _print_scan_results(results)
-
-    if args.report:
-        md_path = generate_markdown_report(
-            target_domain=args.domain,
-            results=results,
-            generated_at=datetime.utcnow().isoformat() + "Z",
-        )
-        print(f"Markdown report written: {md_path}")
-
-    if args.json_report:
-        json_path = generate_json_report(
-            target_domain=args.domain,
-            results=results,
-            generated_at=datetime.utcnow().isoformat() + "Z",
-        )
-        print(f"JSON report written: {json_path}")
-
-
-def build_parser():
-    parser = argparse.ArgumentParser(prog="phishing-monitor")
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    scan_parser = subparsers.add_parser("scan", help="Scan for potential phishing domains")
-    scan_parser.add_argument("domain", help="Primary domain to protect")
-    scan_parser.add_argument("--threshold", type=float, default=0.75, help="Similarity threshold")
-    scan_parser.add_argument(
-        "--min-risk",
-        type=float,
-        default=0.0,
-        help="Minimum risk score to include in output",
-    )
-    scan_parser.add_argument(
-        "--top",
-        type=int,
-        default=None,
-        help="Return only the top N highest-risk candidates after scoring/sorting",
-    )
-    scan_parser.add_argument("--report", action="store_true", help="Generate Markdown report")
-    scan_parser.add_argument("--json-report", action="store_true", help="Generate JSON report")
-    scan_parser.set_defaults(func=handle_scan)
-
-    return parser
 
 
 def main():
-    parser = build_parser()
+    parser = argparse.ArgumentParser(prog="phishing-monitor")
+    subparsers = parser.add_subparsers(dest="command")
+
+    scan_parser = subparsers.add_parser("scan", help="Run typosquat scan")
+    scan_parser.add_argument("domain", help="Brand domain to monitor")
+    scan_parser.add_argument("--threshold", type=float, default=0.75, help="Similarity threshold")
+    scan_parser.add_argument("--top", type=int, default=None, help="Show top N results")
+    scan_parser.add_argument(
+        "--min-risk",
+        choices=["benign", "low", "medium", "high", "critical"],
+        default=None,
+        help="Minimum risk level to display in terminal output",
+    )
+    scan_parser.add_argument(
+        "--hide-benign",
+        action="store_true",
+        help="Hide low/benign findings from terminal output (reports are unchanged)",
+    )
+    scan_parser.add_argument("--report", action="store_true", help="Write markdown report")
+    scan_parser.add_argument("--json-report", action="store_true", help="Write JSON report")
+
     args = parser.parse_args()
 
-    if getattr(args, "top", None) is not None and args.top < 1:
-        parser.error("--top must be a positive integer")
+    if args.command == "scan":
+        results = run_scan(args.domain, similarity_threshold=args.threshold)
 
-    args.func(args)
+        _print_scan_results(
+            results,
+            min_risk=args.min_risk,
+            hide_benign=args.hide_benign,
+            top=args.top,
+        )
+
+        if args.report:
+            write_markdown_report(args.domain, results)
+        if args.json_report:
+            write_json_report(args.domain, results)
 
 
 if __name__ == "__main__":
