@@ -41,6 +41,12 @@ Limit output to top risk-ranked candidates:
 phishing-monitor scan example.com --threshold 0.75 --top 10
 ```
 
+Hide low/benign findings in terminal output during triage:
+
+```bash
+phishing-monitor scan example.com --hide-benign
+```
+
 With report outputs:
 
 ```bash
