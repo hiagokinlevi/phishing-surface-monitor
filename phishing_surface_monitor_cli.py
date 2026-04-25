@@ -1,53 +1,100 @@
 import argparse
 import json
-from datetime import datetime, timezone
+from pathlib import Path
 
-from monitors.ct_monitor import monitor_ct_for_domain
+from analyzers.typosquat import generate_typosquat_variants, score_similarity
+from monitors.dns_monitor import check_dns_resolution
+from reports.generator import generate_markdown_report, generate_json_report
 
 
-def _event_to_jsonl_record(event: dict) -> dict:
-    domain = event.get("domain") or event.get("matched_domain") or event.get("name_value")
-    reason = event.get("reason") or event.get("alert_reason") or event.get("risk_reason")
-    seen_ts = event.get("seen_at") or event.get("timestamp")
-    if isinstance(seen_ts, datetime):
-        seen_ts = seen_ts.astimezone(timezone.utc).isoformat()
+def _build_scan_parser(subparsers: argparse._SubParsersAction) -> None:
+    scan_parser = subparsers.add_parser(
+        "scan",
+        help="Scan for typosquatted domains and assess risk",
+        description="Generate candidate lookalike domains, run DNS checks, score risk, and optionally write reports.",
+    )
+    scan_parser.add_argument("domain", help="Base domain to monitor (e.g., example.com)")
+    scan_parser.add_argument("--threshold", type=float, default=0.75, help="Minimum similarity threshold (default: 0.75)")
+    scan_parser.add_argument("--min-risk", choices=["low", "medium", "high"], help="Only include findings at or above this risk level")
+    scan_parser.add_argument(
+        "--only-resolved",
+        action="store_true",
+        help="Only include domains with successful DNS resolution in output and reports",
+    )
+    scan_parser.add_argument("--report", action="store_true", help="Write Markdown report")
+    scan_parser.add_argument("--json-report", action="store_true", help="Write JSON report")
 
-    return {
-        "domain": domain,
-        "fingerprint": event.get("fingerprint") or event.get("cert_fingerprint"),
-        "serial": event.get("serial") or event.get("serial_number"),
-        "wildcard": bool(event.get("wildcard", False)),
-        "seen_at": seen_ts,
-        "reason": reason,
-    }
+
+def _risk_rank(level: str) -> int:
+    return {"low": 1, "medium": 2, "high": 3}.get(level, 0)
+
+
+def run_scan(args: argparse.Namespace) -> int:
+    variants = generate_typosquat_variants(args.domain)
+    findings = []
+
+    for candidate in variants:
+        similarity = score_similarity(args.domain, candidate)
+        if similarity < args.threshold:
+            continue
+
+        dns = check_dns_resolution(candidate)
+        resolved = bool(dns.get("resolved", False))
+
+        if similarity >= 0.9 and resolved:
+            risk = "high"
+        elif similarity >= 0.85 or resolved:
+            risk = "medium"
+        else:
+            risk = "low"
+
+        findings.append(
+            {
+                "base_domain": args.domain,
+                "candidate_domain": candidate,
+                "similarity": round(similarity, 4),
+                "dns": dns,
+                "resolved": resolved,
+                "risk": risk,
+            }
+        )
+
+    if args.min_risk:
+        min_rank = _risk_rank(args.min_risk)
+        findings = [f for f in findings if _risk_rank(f.get("risk", "low")) >= min_rank]
+
+    if args.only_resolved:
+        findings = [f for f in findings if f.get("resolved")]
+
+    for f in findings:
+        print(f"{f['candidate_domain']} | similarity={f['similarity']} | resolved={f['resolved']} | risk={f['risk']}")
+
+    if args.report:
+        report_path = generate_markdown_report(args.domain, findings)
+        print(f"Markdown report written: {report_path}")
+
+    if args.json_report:
+        json_path = generate_json_report(args.domain, findings)
+        print(f"JSON report written: {json_path}")
+
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="phishing-monitor")
-    sub = parser.add_subparsers(dest="command")
+    subparsers = parser.add_subparsers(dest="command", required=True)
 
-    ct = sub.add_parser("ct-monitor", help="Monitor certificate transparency events")
-    ct.add_argument("domain", help="Base domain to monitor")
-    ct.add_argument("--jsonl", action="store_true", help="Emit one JSON object per event line")
+    _build_scan_parser(subparsers)
 
     return parser
 
 
-def main(argv=None):
+def main() -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args()
 
-    if args.command == "ct-monitor":
-        events = monitor_ct_for_domain(args.domain)
-        if args.jsonl:
-            for ev in events:
-                print(json.dumps(_event_to_jsonl_record(ev), sort_keys=True))
-        else:
-            for ev in events:
-                domain = ev.get("domain") or ev.get("matched_domain") or ev.get("name_value")
-                reason = ev.get("reason") or ev.get("alert_reason") or "ct-event"
-                print(f"[CT] {domain} :: {reason}")
-        return 0
+    if args.command == "scan":
+        return run_scan(args)
 
     parser.print_help()
     return 1
