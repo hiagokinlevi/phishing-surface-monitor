@@ -43,4 +43,4 @@
 - [x] Add JSON schema validation step before report write (cycle 28)
 - [x] Expose suspicious URL reason codes in link triage summary table (cycle 29)
 - [x] Add timeout and r
-- [x] Add `--top` limit to scan output and reports (cycle 36)
+- [x] Add `--hide-benign` flag to scan command (cycle 37)
