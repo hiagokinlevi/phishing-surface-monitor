@@ -35,10 +35,16 @@ cp .env.example .env
 phishing-monitor scan example.com --threshold 0.75
 ```
 
+Limit output to top risk-ranked candidates:
+
+```bash
+phishing-monitor scan example.com --threshold 0.75 --top 10
+```
+
 With report outputs:
 
 ```bash
-phishing-monitor scan example.com --threshold 0.75 --report --json-report
+phishing-monitor scan example.com --threshold 0.75 --top 10 --report --json-report
 ```
 
 ### 2) CT log checks
