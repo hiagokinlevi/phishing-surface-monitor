@@ -43,4 +43,4 @@
 - [x] Add JSON schema validation step before report write (cycle 28)
 - [x] Expose suspicious URL reason codes in link triage summary table (cycle 29)
 - [x] Add timeout and r
-- [x] Add `--jsonl` output mode for CT monitor events (cycle 34)
+- [x] Add `--only-resolved` filter to scan command (cycle 35)
