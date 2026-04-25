@@ -1,49 +1,57 @@
-from __future__ import annotations
-
+import argparse
 import json
-from pathlib import Path
-from typing import Optional
+from datetime import datetime, timezone
 
-import typer
-
-from analyzers.typosquat import scan_domain
-from reports.writer import write_json_report, write_markdown_report
-
-app = typer.Typer(help="Defensive brand protection toolkit for phishing surface monitoring.")
+from monitors.ct_monitor import monitor_ct_for_domain
 
 
-def _ensure_output_dir(output_dir: Optional[Path]) -> Path:
-    target = output_dir or Path.cwd()
-    target.mkdir(parents=True, exist_ok=True)
-    return target
+def _event_to_jsonl_record(event: dict) -> dict:
+    domain = event.get("domain") or event.get("matched_domain") or event.get("name_value")
+    reason = event.get("reason") or event.get("alert_reason") or event.get("risk_reason")
+    seen_ts = event.get("seen_at") or event.get("timestamp")
+    if isinstance(seen_ts, datetime):
+        seen_ts = seen_ts.astimezone(timezone.utc).isoformat()
+
+    return {
+        "domain": domain,
+        "fingerprint": event.get("fingerprint") or event.get("cert_fingerprint"),
+        "serial": event.get("serial") or event.get("serial_number"),
+        "wildcard": bool(event.get("wildcard", False)),
+        "seen_at": seen_ts,
+        "reason": reason,
+    }
 
 
-@app.command("scan")
-def scan(
-    domain: str,
-    threshold: float = typer.Option(0.75, "--threshold", help="Similarity threshold for candidate variants."),
-    report: bool = typer.Option(False, "--report", help="Write Markdown report artifact."),
-    json_report: bool = typer.Option(False, "--json-report", help="Write JSON report artifact."),
-    output_dir: Optional[Path] = typer.Option(
-        None,
-        "--output-dir",
-        help="Directory where report files are written.",
-        file_okay=False,
-        dir_okay=True,
-        writable=True,
-        resolve_path=False,
-      ),
-):
-    results = scan_domain(domain=domain, threshold=threshold)
-    typer.echo(json.dumps(results, indent=2))
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="phishing-monitor")
+    sub = parser.add_subparsers(dest="command")
 
-    if report or json_report:
-        target_dir = _ensure_output_dir(output_dir)
-        if report:
-            md_path = target_dir / f"{domain}_scan_report.md"
-            write_markdown_report(results, md_path)
-            typer.echo(f"Markdown report written: {md_path}")
-        if json_report:
-            json_path = target_dir / f"{domain}_scan_report.json"
-            write_json_report(results, json_path)
-            typer.echo(f"JSON report written: {json_path}")
+    ct = sub.add_parser("ct-monitor", help="Monitor certificate transparency events")
+    ct.add_argument("domain", help="Base domain to monitor")
+    ct.add_argument("--jsonl", action="store_true", help="Emit one JSON object per event line")
+
+    return parser
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if args.command == "ct-monitor":
+        events = monitor_ct_for_domain(args.domain)
+        if args.jsonl:
+            for ev in events:
+                print(json.dumps(_event_to_jsonl_record(ev), sort_keys=True))
+        else:
+            for ev in events:
+                domain = ev.get("domain") or ev.get("matched_domain") or ev.get("name_value")
+                reason = ev.get("reason") or ev.get("alert_reason") or "ct-event"
+                print(f"[CT] {domain} :: {reason}")
+        return 0
+
+    parser.print_help()
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
