@@ -1,104 +1,95 @@
 import argparse
 import json
-from pathlib import Path
+from datetime import datetime
 
-from analyzers.typosquat import generate_typosquat_variants, score_similarity
-from monitors.dns_monitor import check_dns_resolution
-from reports.generator import generate_markdown_report, generate_json_report
-
-
-def _build_scan_parser(subparsers: argparse._SubParsersAction) -> None:
-    scan_parser = subparsers.add_parser(
-        "scan",
-        help="Scan for typosquatted domains and assess risk",
-        description="Generate candidate lookalike domains, run DNS checks, score risk, and optionally write reports.",
-    )
-    scan_parser.add_argument("domain", help="Base domain to monitor (e.g., example.com)")
-    scan_parser.add_argument("--threshold", type=float, default=0.75, help="Minimum similarity threshold (default: 0.75)")
-    scan_parser.add_argument("--min-risk", choices=["low", "medium", "high"], help="Only include findings at or above this risk level")
-    scan_parser.add_argument(
-        "--only-resolved",
-        action="store_true",
-        help="Only include domains with successful DNS resolution in output and reports",
-    )
-    scan_parser.add_argument("--report", action="store_true", help="Write Markdown report")
-    scan_parser.add_argument("--json-report", action="store_true", help="Write JSON report")
+from analyzers.domain_analyzer import analyze_domain_candidates
+from reports.markdown_report import generate_markdown_report
+from reports.json_report import generate_json_report
 
 
-def _risk_rank(level: str) -> int:
-    return {"low": 1, "medium": 2, "high": 3}.get(level, 0)
+def _print_scan_results(results):
+    if not results:
+        print("No candidates found.")
+        return
 
-
-def run_scan(args: argparse.Namespace) -> int:
-    variants = generate_typosquat_variants(args.domain)
-    findings = []
-
-    for candidate in variants:
-        similarity = score_similarity(args.domain, candidate)
-        if similarity < args.threshold:
-            continue
-
-        dns = check_dns_resolution(candidate)
-        resolved = bool(dns.get("resolved", False))
-
-        if similarity >= 0.9 and resolved:
-            risk = "high"
-        elif similarity >= 0.85 or resolved:
-            risk = "medium"
-        else:
-            risk = "low"
-
-        findings.append(
-            {
-                "base_domain": args.domain,
-                "candidate_domain": candidate,
-                "similarity": round(similarity, 4),
-                "dns": dns,
-                "resolved": resolved,
-                "risk": risk,
-            }
+    for r in results:
+        domain = r.get("domain", "")
+        score = r.get("risk_score", 0)
+        risk = r.get("risk_level", "unknown")
+        similarity = r.get("similarity", 0)
+        dns_resolves = r.get("dns_resolves", False)
+        print(
+            f"{domain:35} risk={score:.2f} level={risk:8} similarity={similarity:.2f} dns={dns_resolves}"
         )
 
-    if args.min_risk:
-        min_rank = _risk_rank(args.min_risk)
-        findings = [f for f in findings if _risk_rank(f.get("risk", "low")) >= min_rank]
 
-    if args.only_resolved:
-        findings = [f for f in findings if f.get("resolved")]
+def handle_scan(args):
+    results = analyze_domain_candidates(
+        target_domain=args.domain,
+        threshold=args.threshold,
+        min_risk=args.min_risk,
+    )
 
-    for f in findings:
-        print(f"{f['candidate_domain']} | similarity={f['similarity']} | resolved={f['resolved']} | risk={f['risk']}")
+    # Ensure highest-risk-first ordering before applying top limit.
+    results = sorted(results, key=lambda x: x.get("risk_score", 0), reverse=True)
+
+    if args.top is not None:
+        results = results[: args.top]
+
+    _print_scan_results(results)
 
     if args.report:
-        report_path = generate_markdown_report(args.domain, findings)
-        print(f"Markdown report written: {report_path}")
+        md_path = generate_markdown_report(
+            target_domain=args.domain,
+            results=results,
+            generated_at=datetime.utcnow().isoformat() + "Z",
+        )
+        print(f"Markdown report written: {md_path}")
 
     if args.json_report:
-        json_path = generate_json_report(args.domain, findings)
+        json_path = generate_json_report(
+            target_domain=args.domain,
+            results=results,
+            generated_at=datetime.utcnow().isoformat() + "Z",
+        )
         print(f"JSON report written: {json_path}")
 
-    return 0
 
-
-def build_parser() -> argparse.ArgumentParser:
+def build_parser():
     parser = argparse.ArgumentParser(prog="phishing-monitor")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    _build_scan_parser(subparsers)
+    scan_parser = subparsers.add_parser("scan", help="Scan for potential phishing domains")
+    scan_parser.add_argument("domain", help="Primary domain to protect")
+    scan_parser.add_argument("--threshold", type=float, default=0.75, help="Similarity threshold")
+    scan_parser.add_argument(
+        "--min-risk",
+        type=float,
+        default=0.0,
+        help="Minimum risk score to include in output",
+    )
+    scan_parser.add_argument(
+        "--top",
+        type=int,
+        default=None,
+        help="Return only the top N highest-risk candidates after scoring/sorting",
+    )
+    scan_parser.add_argument("--report", action="store_true", help="Generate Markdown report")
+    scan_parser.add_argument("--json-report", action="store_true", help="Generate JSON report")
+    scan_parser.set_defaults(func=handle_scan)
 
     return parser
 
 
-def main() -> int:
+def main():
     parser = build_parser()
     args = parser.parse_args()
 
-    if args.command == "scan":
-        return run_scan(args)
+    if getattr(args, "top", None) is not None and args.top < 1:
+        parser.error("--top must be a positive integer")
 
-    parser.print_help()
-    return 1
+    args.func(args)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
