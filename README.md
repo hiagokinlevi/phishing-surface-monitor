@@ -53,6 +53,12 @@ With report outputs:
 phishing-monitor scan example.com --threshold 0.75 --top 10 --report --json-report
 ```
 
+With CSV artifact output:
+
+```bash
+phishing-monitor scan example.com --threshold 0.75 --csv-report
+```
+
 ### 2) CT log checks
 
 ```bash
