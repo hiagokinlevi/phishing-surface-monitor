@@ -1,54 +1,11 @@
-from __future__ import annotations
-
-import csv
 import json
-from datetime import datetime
-from pathlib import Path
+from typing import List, Dict, Any
 
 import click
 
-from analyzers.typosquat import run_typosquat_scan
-from reports.markdown import generate_markdown_report
-
-
-def _timestamp_slug() -> str:
-    return datetime.utcnow().strftime("%Y%m%d-%H%M%S")
-
-
-def _default_report_base(domain: str) -> Path:
-    reports_dir = Path("reports")
-    reports_dir.mkdir(parents=True, exist_ok=True)
-    safe_domain = domain.replace("/", "_")
-    return reports_dir / f"scan-{safe_domain}-{_timestamp_slug()}"
-
-
-def _write_json_report(path: Path, findings: list[dict]) -> None:
-    path.write_text(json.dumps(findings, indent=2), encoding="utf-8")
-
-
-def _write_csv_report(path: Path, findings: list[dict]) -> None:
-    fieldnames = [
-        "domain",
-        "normalized_domain",
-        "similarity_score",
-        "dns_resolves",
-        "risk_level",
-        "reasons",
-    ]
-    with path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in findings:
-            writer.writerow(
-                {
-                    "domain": row.get("domain", ""),
-                    "normalized_domain": row.get("normalized_domain", ""),
-                    "similarity_score": row.get("similarity_score", ""),
-                    "dns_resolves": row.get("dns_resolves", ""),
-                    "risk_level": row.get("risk_level", ""),
-                    "reasons": "; ".join(row.get("reasons", []) or []),
-                }
-            )
+from analyzers.typosquat import generate_typosquat_variants
+from analyzers.risk import score_domain_risk
+from reports.generator import generate_markdown_report, generate_json_report
 
 
 @click.group()
@@ -58,52 +15,53 @@ def cli() -> None:
 
 @cli.command("scan")
 @click.argument("domain")
-@click.option("--threshold", default=0.75, type=float, show_default=True)
-@click.option("--top", default=None, type=int)
-@click.option("--report", is_flag=True, help="Write Markdown report artifact")
-@click.option("--json-report", is_flag=True, help="Write JSON report artifact")
-@click.option("--csv-report", is_flag=True, help="Write CSV report artifact")
-@click.option("--hide-benign", is_flag=True, help="Hide benign findings in terminal output")
-def scan_command(
+@click.option("--threshold", default=0.75, show_default=True, type=float)
+@click.option("--top", default=20, show_default=True, type=int)
+@click.option("--hide-benign", is_flag=True, default=False)
+@click.option("--min-risk", default=None, type=float)
+@click.option("--report", is_flag=True, default=False)
+@click.option("--json-report", is_flag=True, default=False)
+@click.option("--sort-by-risk", is_flag=True, default=False, help="Sort findings by descending risk score before rendering/output.")
+def scan(
     domain: str,
     threshold: float,
-    top: int | None,
+    top: int,
+    hide_benign: bool,
+    min_risk: float | None,
     report: bool,
     json_report: bool,
-    csv_report: bool,
-    hide_benign: bool,
+    sort_by_risk: bool,
 ) -> None:
-    findings = run_typosquat_scan(domain=domain, threshold=threshold)
+    variants = generate_typosquat_variants(domain)
 
-    if hide_benign:
-        findings = [f for f in findings if str(f.get("risk_level", "")).lower() != "benign"]
+    findings: List[Dict[str, Any]] = []
+    for candidate in variants:
+        finding = score_domain_risk(domain, candidate, threshold=threshold)
+        if hide_benign and finding.get("risk_level") == "benign":
+            continue
+        if min_risk is not None and float(finding.get("risk_score", 0.0)) < min_risk:
+            continue
+        findings.append(finding)
 
-    if top is not None:
-        findings = findings[:top]
+    if sort_by_risk:
+        findings = sorted(findings, key=lambda f: float(f.get("risk_score", 0.0)), reverse=True)
 
-    for item in findings:
+    findings = findings[:top]
+
+    for f in findings:
         click.echo(
-            f"- {item.get('domain')} | score={item.get('similarity_score')} | "
-            f"dns={item.get('dns_resolves')} | risk={item.get('risk_level')}"
+            f"{f.get('candidate_domain','-')}\t"
+            f"score={float(f.get('risk_score', 0.0)):.3f}\t"
+            f"level={f.get('risk_level','unknown')}"
         )
 
-    if report or json_report or csv_report:
-        base = _default_report_base(domain)
+    if report:
+        md = generate_markdown_report(target_domain=domain, findings=findings)
+        click.echo(md)
 
-        if report:
-            md_path = base.with_suffix(".md")
-            md_path.write_text(generate_markdown_report(domain, findings), encoding="utf-8")
-            click.echo(f"[report] Markdown: {md_path}")
-
-        if json_report:
-            json_path = base.with_suffix(".json")
-            _write_json_report(json_path, findings)
-            click.echo(f"[report] JSON: {json_path}")
-
-        if csv_report:
-            csv_path = base.with_suffix(".csv")
-            _write_csv_report(csv_path, findings)
-            click.echo(f"[report] CSV: {csv_path}")
+    if json_report:
+        payload = generate_json_report(target_domain=domain, findings=findings)
+        click.echo(json.dumps(payload, indent=2))
 
 
 if __name__ == "__main__":
