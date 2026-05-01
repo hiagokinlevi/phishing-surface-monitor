@@ -62,7 +62,7 @@ phishing-monitor scan example.com --threshold 0.75 --csv-report
 ### 2) CT log checks
 
 ```bash
-phishing-monitor ct-monitor example.com
+phishing-monitor ct-monitor example.com --risk-threshold 0.70
 ```
 
 ### 3) DMARC lookup
