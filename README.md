@@ -41,6 +41,12 @@ Limit output to top risk-ranked candidates:
 phishing-monitor scan example.com --threshold 0.75 --top 10
 ```
 
+Cap analyzed generated variants for quick triage runs:
+
+```bash
+phishing-monitor scan example.com --max-variants 200
+```
+
 Hide low/benign findings in terminal output during triage:
 
 ```bash
