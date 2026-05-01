@@ -59,6 +59,12 @@ With CSV artifact output:
 phishing-monitor scan example.com --threshold 0.75 --csv-report
 ```
 
+Use a custom DNS resolver for DNS-dependent checks:
+
+```bash
+phishing-monitor scan example.com --resolver 1.1.1.1
+```
+
 ### 2) CT log checks
 
 ```bash
