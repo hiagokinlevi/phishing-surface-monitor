@@ -43,4 +43,4 @@
 - [x] Add JSON schema validation step before report write (cycle 28)
 - [x] Expose suspicious URL reason codes in link triage summary table (cycle 29)
 - [x] Add timeout and r
-- [x] Add `--summary-only` flag to scan command (cycle 43)
+- [x] Add `--known-domains-file` allowlist filter to `scan` command (cycle 44)
