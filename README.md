@@ -53,6 +53,12 @@ Hide low/benign findings in terminal output during triage:
 phishing-monitor scan example.com --hide-benign
 ```
 
+Exclude trusted/owned domains from generated variants using a newline-delimited allowlist file:
+
+```bash
+phishing-monitor scan example.com --known-domains-file known_domains.txt
+```
+
 With report outputs:
 
 ```bash
