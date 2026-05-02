@@ -65,6 +65,12 @@ With report outputs:
 phishing-monitor scan example.com --threshold 0.75 --top 10 --report --json-report
 ```
 
+Write report artifacts into a specific directory (created automatically if missing):
+
+```bash
+phishing-monitor scan example.com --report --json-report --output-dir artifacts/reports
+```
+
 CI-friendly aggregate-only terminal summary (still writes artifacts when requested):
 
 ```bash
@@ -113,4 +119,4 @@ phishing-monitor --no-color scan example.com --summary-only
 
 ## Ethical Use
 
-Authorized, defensive use only. Do not run monitoring against organizations you do not own or explicitly protect. Follow applicable laws, contracts, and internal policy.
+Authorized, defensive use only. Do not run monitoring against organizations you
