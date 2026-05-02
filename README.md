@@ -103,6 +103,14 @@ Generate Markdown + JSON artifacts from scan results:
 phishing-monitor scan example.com --report --json-report
 ```
 
+### Non-interactive environments
+
+Use global `--no-color` to emit plain-text output for CI logs/SIEM ingestion:
+
+```bash
+phishing-monitor --no-color scan example.com --summary-only
+```
+
 ## Ethical Use
 
 Authorized, defensive use only. Do not run monitoring against organizations you do not own or explicitly protect. Follow applicable laws, contracts, and internal policy.
