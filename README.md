@@ -59,6 +59,12 @@ With report outputs:
 phishing-monitor scan example.com --threshold 0.75 --top 10 --report --json-report
 ```
 
+CI-friendly aggregate-only terminal summary (still writes artifacts when requested):
+
+```bash
+phishing-monitor scan example.com --summary-only --report --json-report
+```
+
 With CSV artifact output:
 
 ```bash
