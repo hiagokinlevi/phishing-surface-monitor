@@ -43,4 +43,4 @@
 - [x] Add JSON schema validation step before report write (cycle 28)
 - [x] Expose suspicious URL reason codes in link triage summary table (cycle 29)
 - [x] Add timeout and r
-- [x] Add `--max-variants` option to scan command (cycle 42)
+- [x] Add `--summary-only` flag to scan command (cycle 43)
