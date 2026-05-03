@@ -43,4 +43,4 @@
 - [x] Add JSON schema validation step before report write (cycle 28)
 - [x] Expose suspicious URL reason codes in link triage summary table (cycle 29)
 - [x] Add timeout and r
-- [x] Add `--output-dir` option to centralize report artifacts (cycle 46)
+- [x] Add `--registrable-only` filter to exclude non-registrable TLD variants (cycle 47)
