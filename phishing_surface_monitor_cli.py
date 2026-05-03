@@ -1,129 +1,108 @@
-from __future__ import annotations
-
+import argparse
 import json
-from pathlib import Path
-from typing import Optional
+import os
+from datetime import datetime
+from typing import Any
 
-import click
-
-from cli.scan import run_scan
-
-
-COMMON_REGISTRABLE_SUFFIXES = {
-    "com",
-    "net",
-    "org",
-    "io",
-    "co",
-    "ai",
-    "app",
-    "dev",
-    "info",
-    "biz",
-    "us",
-    "uk",
-    "co.uk",
-    "ca",
-    "au",
-    "co.au",
-    "de",
-    "fr",
-    "nl",
-    "jp",
-    "in",
-    "ch",
-    "it",
-    "es",
-}
+from analyzers.domain_analyzer import analyze_domain
+from reports.report_generator import generate_json_report, generate_markdown_report
 
 
-def _extract_suffix(domain: str) -> str:
-    d = (domain or "").strip(".").lower()
-    if not d or "." not in d:
-        return ""
-    labels = d.split(".")
-    if len(labels) < 2:
-        return ""
-    # support common 2-label public suffixes in allowlist (e.g., co.uk)
-    if len(labels) >= 3:
-        two = ".".join(labels[-2:])
-        if two in COMMON_REGISTRABLE_SUFFIXES:
-            return two
-    return labels[-1]
+def _print_scan_table(results: list[dict[str, Any]], hide_benign: bool = False, summary_only: bool = False) -> None:
+    if summary_only:
+        total = len(results)
+        critical = sum(1 for r in results if r.get("risk_level") == "critical")
+        high = sum(1 for r in results if r.get("risk_level") == "high")
+        medium = sum(1 for r in results if r.get("risk_level") == "medium")
+        low = sum(1 for r in results if r.get("risk_level") == "low")
+        benign = sum(1 for r in results if r.get("risk_level") == "benign")
+        print(f"Scan summary: total={total} critical={critical} high={high} medium={medium} low={low} benign={benign}")
+        return
+
+    print("domain\tscore\trisk\tresolved")
+    for row in results:
+        if hide_benign and row.get("risk_level") == "benign":
+            continue
+        print(
+            f"{row.get('domain', '')}\t{row.get('similarity', 0):.2f}\t{row.get('risk_level', '')}\t{row.get('dns_resolves', False)}"
+        )
 
 
-def _is_registrable_suffix(domain: str) -> bool:
-    suffix = _extract_suffix(domain)
-    return suffix in COMMON_REGISTRABLE_SUFFIXES
-
-
-@click.group()
-def cli() -> None:
-    """phishing-surface-monitor CLI"""
-
-
-@cli.command("scan")
-@click.argument("target_domain")
-@click.option("--threshold", default=0.75, show_default=True, type=float, help="Minimum similarity threshold.")
-@click.option("--top", default=None, type=int, help="Limit output to top N risk-ranked candidates.")
-@click.option("--max-variants", default=None, type=int, help="Cap analyzed generated variants.")
-@click.option("--hide-benign", is_flag=True, help="Hide low/benign findings in terminal output.")
-@click.option("--known-domains-file", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None, help="Newline-delimited trusted/owned domains to exclude.")
-@click.option("--report", is_flag=True, help="Write Markdown report artifact.")
-@click.option("--json-report", is_flag=True, help="Write JSON report artifact.")
-@click.option("--csv-report", is_flag=True, help="Write CSV report artifact.")
-@click.option("--output-dir", type=click.Path(file_okay=False, path_type=Path), default=None, help="Output directory for report artifacts.")
-@click.option("--summary-only", is_flag=True, help="Print aggregate-only terminal summary.")
-@click.option("--resolver", default=None, type=str, help="Custom DNS resolver IP.")
-@click.option(
-    "--registrable-only",
-    is_flag=True,
-    help="Exclude generated variants with TLD/public suffixes outside a maintained registrable allowlist (reduces low-value noise).",
-)
-def scan(
-    target_domain: str,
-    threshold: float,
-    top: Optional[int],
-    max_variants: Optional[int],
-    hide_benign: bool,
-    known_domains_file: Optional[Path],
-    report: bool,
-    json_report: bool,
-    csv_report: bool,
-    output_dir: Optional[Path],
-    summary_only: bool,
-    resolver: Optional[str],
-    registrable_only: bool,
-) -> None:
-    known_domains = None
-    if known_domains_file:
-        known_domains = {
-            line.strip().lower()
-            for line in known_domains_file.read_text(encoding="utf-8").splitlines()
-            if line.strip() and not line.strip().startswith("#")
-        }
-
-    results = run_scan(
-        target_domain=target_domain,
-        threshold=threshold,
-        top=top,
-        max_variants=max_variants,
-        hide_benign=hide_benign,
-        known_domains=known_domains,
-        report=report,
-        json_report=json_report,
-        csv_report=csv_report,
-        output_dir=output_dir,
-        summary_only=summary_only,
-        resolver=resolver,
+def run_scan(args: argparse.Namespace) -> int:
+    result = analyze_domain(
+        args.domain,
+        threshold=args.threshold,
+        top=args.top,
+        max_variants=args.max_variants,
+        min_risk=args.min_risk,
+        resolver=args.resolver,
+        known_domains_file=args.known_domains_file,
+        registrable_only=args.registrable_only,
     )
 
-    if registrable_only and isinstance(results, dict) and "findings" in results:
-        findings = results.get("findings") or []
-        results["findings"] = [f for f in findings if _is_registrable_suffix(str(f.get("domain", "")))]
+    findings = result.get("findings", [])
+    _print_scan_table(findings, hide_benign=args.hide_benign, summary_only=args.summary_only)
 
-    click.echo(json.dumps(results, indent=2, ensure_ascii=False))
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    output_dir = args.output_dir or "reports"
+    os.makedirs(output_dir, exist_ok=True)
+
+    if args.report:
+        md_path = os.path.join(output_dir, f"scan_{args.domain}_{timestamp}.md")
+        generate_markdown_report(result, md_path)
+        print(f"Markdown report: {md_path}")
+
+    if args.json_report:
+        json_path = os.path.join(output_dir, f"scan_{args.domain}_{timestamp}.json")
+        generate_json_report(result, json_path)
+        print(f"JSON report: {json_path}")
+
+    if args.csv_report:
+        csv_path = os.path.join(output_dir, f"scan_{args.domain}_{timestamp}.csv")
+        with open(csv_path, "w", encoding="utf-8") as f:
+            f.write("domain,similarity,risk_level,dns_resolves\n")
+            for row in findings:
+                f.write(
+                    f"{row.get('domain', '')},{row.get('similarity', 0)},{row.get('risk_level', '')},{row.get('dns_resolves', False)}\n"
+                )
+        print(f"CSV report: {csv_path}")
+
+    if args.json_stdout:
+        print(json.dumps(result, ensure_ascii=False))
+
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="phishing-monitor")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    scan = sub.add_parser("scan", help="Run typosquat scan")
+    scan.add_argument("domain")
+    scan.add_argument("--threshold", type=float, default=0.75)
+    scan.add_argument("--top", type=int, default=25)
+    scan.add_argument("--max-variants", type=int, default=None)
+    scan.add_argument("--min-risk", default=None)
+    scan.add_argument("--hide-benign", action="store_true")
+    scan.add_argument("--summary-only", action="store_true")
+    scan.add_argument("--report", action="store_true")
+    scan.add_argument("--json-report", action="store_true")
+    scan.add_argument("--csv-report", action="store_true")
+    scan.add_argument("--json-stdout", action="store_true", help="Print final scan JSON payload to stdout")
+    scan.add_argument("--output-dir", default=None)
+    scan.add_argument("--resolver", default=None)
+    scan.add_argument("--known-domains-file", default=None)
+    scan.add_argument("--registrable-only", action="store_true")
+    scan.set_defaults(func=run_scan)
+
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+    return args.func(args)
 
 
 if __name__ == "__main__":
-    cli()
+    raise SystemExit(main())
