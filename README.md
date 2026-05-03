@@ -59,6 +59,12 @@ Exclude trusted/owned domains from generated variants using a newline-delimited 
 phishing-monitor scan example.com --known-domains-file known_domains.txt
 ```
 
+Filter out variants that do not use common registrable public suffixes:
+
+```bash
+phishing-monitor scan example.com --registrable-only
+```
+
 With report outputs:
 
 ```bash
@@ -111,12 +117,4 @@ phishing-monitor scan example.com --report --json-report
 
 ### Non-interactive environments
 
-Use global `--no-color` to emit plain-text output for CI logs/SIEM ingestion:
-
-```bash
-phishing-monitor --no-color scan example.com --summary-only
-```
-
-## Ethical Use
-
-Authorized, defensive use only. Do not run monitoring against organizations you
+Use global `--no-color` to emit plain-text output for CI log
