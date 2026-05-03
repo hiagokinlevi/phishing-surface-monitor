@@ -83,6 +83,12 @@ CI-friendly aggregate-only terminal summary (still writes artifacts when request
 phishing-monitor scan example.com --summary-only --report --json-report
 ```
 
+Stream final scan payload to stdout for CI/jq automation:
+
+```bash
+phishing-monitor scan example.com --json-stdout | jq
+```
+
 With CSV artifact output:
 
 ```bash
@@ -112,9 +118,5 @@ phishing-monitor dmarc-check suspicious-example.net
 Generate Markdown + JSON artifacts from scan results:
 
 ```bash
-phishing-monitor scan example.com --report --json-report
+phishing-monitor 
 ```
-
-### Non-interactive environments
-
-Use global `--no-color` to emit plain-text output for CI log
