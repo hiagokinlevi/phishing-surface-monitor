@@ -89,6 +89,12 @@ Stream final scan payload to stdout for CI/jq automation:
 phishing-monitor scan example.com --json-stdout | jq
 ```
 
+Stream scan findings as CSV to stdout (no artifact files required):
+
+```bash
+phishing-monitor scan example.com --csv-stdout
+```
+
 With CSV artifact output:
 
 ```bash
@@ -110,13 +116,5 @@ phishing-monitor ct-monitor example.com --risk-threshold 0.70
 ### 3) DMARC lookup
 
 ```bash
-phishing-monitor dmarc-check suspicious-example.net
-```
-
-### 4) Report generation
-
-Generate Markdown + JSON artifacts from scan results:
-
-```bash
-phishing-monitor 
+phishing-monitor dmarc-check suspiciou
 ```
