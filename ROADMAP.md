@@ -43,4 +43,4 @@
 - [x] Add JSON schema validation step before report write (cycle 28)
 - [x] Expose suspicious URL reason codes in link triage summary table (cycle 29)
 - [x] Add timeout and r
-- [x] Add `--fail-on-min-risk` gate to `scan` command (cycle 49)
+- [x] Add `--ct-days` lookback window to `ct-monitor` (cycle 50)
