@@ -1,75 +1,103 @@
+#!/usr/bin/env python3
+"""CLI entrypoint for phishing-surface-monitor."""
+
+from __future__ import annotations
+
 import argparse
+import csv
 import json
 import sys
-from typing import Any, Dict, List
+from pathlib import Path
+from typing import Any
+
+from cli.scan import run_scan
 
 
-RISK_ORDER = {"benign": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
-
-
-def _risk_meets_or_exceeds(level: str, minimum: str) -> bool:
-    return RISK_ORDER.get(str(level).lower(), -1) >= RISK_ORDER.get(str(minimum).lower(), 999)
-
-
-def build_parser() -> argparse.ArgumentParser:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="phishing-monitor")
-    subparsers = parser.add_subparsers(dest="command")
+    subparsers = parser.add_subparsers(dest="command", required=True)
 
-    scan = subparsers.add_parser("scan", help="Scan domains for phishing surface")
-    scan.add_argument("domain")
-    scan.add_argument("--min-risk", choices=["low", "medium", "high"], help="Filter displayed results by minimum risk")
-    scan.add_argument(
-        "--fail-on-min-risk",
-        choices=["low", "medium", "high"],
-        help="Exit with code 2 if any (post-filtered) result is at or above this risk",
-    )
-    scan.set_defaults(func=handle_scan)
+    scan_parser = subparsers.add_parser("scan", help="Run phishing surface scan")
+    scan_parser.add_argument("domain", help="Target brand domain")
+    scan_parser.add_argument("--threshold", type=float, default=0.75)
+    scan_parser.add_argument("--top", type=int, default=None)
+    scan_parser.add_argument("--max-variants", type=int, default=None)
+    scan_parser.add_argument("--hide-benign", action="store_true")
+    scan_parser.add_argument("--known-domains-file", default=None)
+    scan_parser.add_argument("--registrable-only", action="store_true")
+    scan_parser.add_argument("--report", action="store_true")
+    scan_parser.add_argument("--json-report", action="store_true")
+    scan_parser.add_argument("--csv-report", action="store_true")
+    scan_parser.add_argument("--output-dir", default="reports")
+    scan_parser.add_argument("--summary-only", action="store_true")
+    scan_parser.add_argument("--json-stdout", action="store_true")
+    scan_parser.add_argument("--csv-stdout", action="store_true", help="Print scan findings as CSV to stdout")
+    scan_parser.add_argument("--resolver", default=None)
 
     return parser
 
 
-def run_scan(_args: argparse.Namespace) -> List[Dict[str, Any]]:
-    # Placeholder implementation hook; real project logic populates findings.
-    return []
+def _csv_row_from_finding(f: dict[str, Any]) -> dict[str, Any]:
+    reason_codes = f.get("reason_codes") or []
+    if isinstance(reason_codes, (list, tuple)):
+        reason_codes = ";".join(str(x) for x in reason_codes)
+
+    return {
+        "candidate_domain": f.get("candidate_domain") or f.get("domain") or "",
+        "similarity_score": f.get("similarity_score", ""),
+        "dns_resolved": f.get("dns_resolved", ""),
+        "risk_level": f.get("risk_level", ""),
+        "reason_codes": reason_codes,
+    }
 
 
-def _apply_min_risk_filter(results: List[Dict[str, Any]], min_risk: str | None) -> List[Dict[str, Any]]:
-    if not min_risk:
-        return results
-    return [r for r in results if _risk_meets_or_exceeds(r.get("risk", "benign"), min_risk)]
+def _print_csv_stdout(scan_payload: dict[str, Any]) -> None:
+    findings = scan_payload.get("findings") or []
+    fieldnames = [
+        "candidate_domain",
+        "similarity_score",
+        "dns_resolved",
+        "risk_level",
+        "reason_codes",
+    ]
+    writer = csv.DictWriter(sys.stdout, fieldnames=fieldnames)
+    writer.writeheader()
+    for f in findings:
+        writer.writerow(_csv_row_from_finding(f if isinstance(f, dict) else {}))
 
 
-def handle_scan(args: argparse.Namespace) -> int:
-    results = run_scan(args)
-    filtered_results = _apply_min_risk_filter(results, getattr(args, "min_risk", None))
+def main() -> int:
+    parser = _build_parser()
+    args = parser.parse_args()
 
-    # Preserve output behavior (example JSON output path shown as existing behavior placeholder).
-    if getattr(args, "json_stdout", False):
-        print(json.dumps({"results": filtered_results}))
-    else:
-        for row in filtered_results:
-            print(f"{row.get('domain', '')}\t{row.get('risk', '')}")
+    if args.command == "scan":
+        payload = run_scan(
+            domain=args.domain,
+            threshold=args.threshold,
+            top=args.top,
+            max_variants=args.max_variants,
+            hide_benign=args.hide_benign,
+            known_domains_file=args.known_domains_file,
+            registrable_only=args.registrable_only,
+            report=args.report,
+            json_report=args.json_report,
+            csv_report=args.csv_report,
+            output_dir=Path(args.output_dir),
+            summary_only=args.summary_only,
+            resolver=args.resolver,
+        )
 
-    fail_threshold = getattr(args, "fail_on_min_risk", None)
-    if fail_threshold:
-        matched = [r for r in filtered_results if _risk_meets_or_exceeds(r.get("risk", "benign"), fail_threshold)]
-        if matched:
-            print(
-                f"FAIL: {len(matched)} result(s) met or exceeded risk '{fail_threshold}'.",
-                file=sys.stderr,
-            )
-            return 2
+        if args.json_stdout:
+            json.dump(payload, sys.stdout, indent=2)
+            sys.stdout.write("\n")
 
-    return 0
+        if args.csv_stdout:
+            _print_csv_stdout(payload)
 
+        return 0
 
-def main(argv: List[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    if not hasattr(args, "func"):
-        parser.print_help()
-        return 1
-    return args.func(args)
+    parser.print_help()
+    return 1
 
 
 if __name__ == "__main__":
