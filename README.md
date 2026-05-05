@@ -101,6 +101,12 @@ With CSV artifact output:
 phishing-monitor scan example.com --threshold 0.75 --csv-report
 ```
 
+Use semicolon-separated CSV output for spreadsheet locales that expect `;`:
+
+```bash
+phishing-monitor scan example.com --csv-report --csv-delimiter ';'
+```
+
 Use a custom DNS resolver for DNS-dependent checks:
 
 ```bash
@@ -109,8 +115,4 @@ phishing-monitor scan example.com --resolver 1.1.1.1
 
 ### 2) Takedown evidence bundles
 
-Generate a registrar-focused evidence bundle (excludes hosting/provider sections):
-
-```bash
-phishing-monitor takedown suspicious-example.com --registrar-only --output reports/registrar_evidence.json
-```
+G
