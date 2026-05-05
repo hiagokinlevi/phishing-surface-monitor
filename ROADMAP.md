@@ -43,4 +43,4 @@
 - [x] Add JSON schema validation step before report write (cycle 28)
 - [x] Expose suspicious URL reason codes in link triage summary table (cycle 29)
 - [x] Add timeout and r
-- [x] Add `--registrar-only` flag to takedown evidence generation (cycle 52)
+- [x] Add --csv-delimiter option to scan CSV report output (cycle 53)
