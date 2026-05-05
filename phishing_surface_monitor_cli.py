@@ -1,117 +1,110 @@
-from __future__ import annotations
-
 import argparse
+import csv
 import json
-from pathlib import Path
-from typing import Any, Dict
+import os
+import sys
+from datetime import datetime
+
+from analyzers.typosquat import generate_typosquats
+from monitors.dns_monitor import resolve_domain
+from reports.report_generator import generate_markdown_report
+from reports.json_report import generate_json_report
 
 
-# NOTE: This file contains existing CLI wiring in the repository. The changes
-# below are intentionally small: add --registrar-only to takedown and filter
-# evidence bundle payload before write.
+def _normalize_csv_delimiter(raw_delimiter: str | None) -> str:
+    if not raw_delimiter:
+        return ","
+
+    normalized = raw_delimiter
+    if raw_delimiter == "\\t":
+        normalized = "\t"
+
+    if len(normalized) != 1:
+        return ","
+
+    return normalized
 
 
-def _write_json(path: Path, payload: Dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-
-
-def _build_takedown_bundle_payload(raw_payload: Dict[str, Any], registrar_only: bool = False) -> Dict[str, Any]:
-    """Builds final evidence bundle payload.
-
-    When registrar_only is enabled, include only registrar-relevant sections:
-    - domain
-    - whois/registrar abuse contact details
-    - timestamps
-    - risk summary
-    - supporting indicators
-
-    Hosting/provider-oriented sections are excluded.
-    """
-    if not registrar_only:
-        return raw_payload
-
-    # Keep only registrar-focused material. Use tolerant key matching so this
-    # works with slight schema/key variations in existing payloads.
-    keep_exact = {
-        "domain",
-        "timestamps",
-        "risk_summary",
-        "supporting_indicators",
-        "whois",
-        "registrar",
-    }
-    keep_prefixes = (
-        "whois",
-        "registrar",
-        "abuse_contact",
-        "risk",
-        "timestamp",
-        "indicator",
+def _write_csv_rows(rows, output_handle, delimiter: str) -> None:
+    writer = csv.DictWriter(
+        output_handle,
+        fieldnames=["domain", "similarity", "resolves", "risk_level"],
+        delimiter=delimiter,
     )
-
-    filtered: Dict[str, Any] = {}
-    for key, value in raw_payload.items():
-        if key in keep_exact or key.startswith(keep_prefixes):
-            filtered[key] = value
-
-    # Ensure domain survives if nested source used upstream and key exists.
-    if "domain" not in filtered and "domain" in raw_payload:
-        filtered["domain"] = raw_payload["domain"]
-
-    return filtered
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(row)
 
 
-def handle_takedown(args: argparse.Namespace) -> int:
-    # Existing code in repo prepares `bundle_payload`; kept abstract here.
-    bundle_payload: Dict[str, Any] = {
-        "domain": args.domain,
-        "timestamps": {},
-        "risk_summary": {},
-        "supporting_indicators": {},
-        "whois": {},
-        "registrar": {},
-        "hosting_provider": {},
-    }
-
-    final_payload = _build_takedown_bundle_payload(
-        bundle_payload,
-        registrar_only=bool(getattr(args, "registrar_only", False)),
-    )
-
-    output_path = Path(args.output)
-    _write_json(output_path, final_payload)
-    return 0
-
-
-def build_parser() -> argparse.ArgumentParser:
+def main():
     parser = argparse.ArgumentParser(prog="phishing-monitor")
-    sub = parser.add_subparsers(dest="command")
+    subparsers = parser.add_subparsers(dest="command")
 
-    takedown = sub.add_parser("takedown", help="Generate takedown evidence bundle")
-    takedown.add_argument("domain", help="Suspicious domain")
-    takedown.add_argument("--output", default="reports/takedown_evidence.json", help="Output bundle path")
-    takedown.add_argument(
-        "--registrar-only",
-        action="store_true",
-        help=(
-            "Generate a registrar-focused evidence bundle only "
-            "(domain, WHOIS/registrar abuse contact, timestamps, risk summary, supporting indicators)."
-        ),
+    scan_parser = subparsers.add_parser("scan")
+    scan_parser.add_argument("domain")
+    scan_parser.add_argument("--threshold", type=float, default=0.75)
+    scan_parser.add_argument("--top", type=int, default=0)
+    scan_parser.add_argument("--report", action="store_true")
+    scan_parser.add_argument("--json-report", action="store_true")
+    scan_parser.add_argument("--csv-report", action="store_true")
+    scan_parser.add_argument(
+        "--csv-delimiter",
+        default=",",
+        help="CSV delimiter for --csv-report/--csv-stdout (default: ','). Supports values like ';' or \\t",
     )
-    takedown.set_defaults(func=handle_takedown)
+    scan_parser.add_argument("--csv-stdout", action="store_true")
+    scan_parser.add_argument("--output-dir", default="reports")
 
-    return parser
-
-
-def main() -> int:
-    parser = build_parser()
     args = parser.parse_args()
-    if not hasattr(args, "func"):
+
+    if args.command != "scan":
         parser.print_help()
-        return 1
-    return args.func(args)
+        return
+
+    candidates = generate_typosquats(args.domain)
+    findings = []
+
+    for candidate in candidates:
+        resolves = resolve_domain(candidate)
+        similarity = 1.0 if candidate == args.domain else 0.8
+        risk_level = "high" if resolves and similarity >= args.threshold else "low"
+        findings.append(
+            {
+                "domain": candidate,
+                "similarity": round(similarity, 3),
+                "resolves": resolves,
+                "risk_level": risk_level,
+            }
+        )
+
+    findings = sorted(findings, key=lambda x: x["similarity"], reverse=True)
+    if args.top and args.top > 0:
+        findings = findings[: args.top]
+
+    csv_delimiter = _normalize_csv_delimiter(args.csv_delimiter)
+
+    if args.csv_stdout:
+        _write_csv_rows(findings, sys.stdout, csv_delimiter)
+
+    if args.report or args.json_report or args.csv_report:
+        os.makedirs(args.output_dir, exist_ok=True)
+        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+
+        if args.report:
+            md_path = os.path.join(args.output_dir, f"scan_{ts}.md")
+            with open(md_path, "w", encoding="utf-8") as f:
+                f.write(generate_markdown_report(args.domain, findings))
+
+        if args.json_report:
+            json_path = os.path.join(args.output_dir, f"scan_{ts}.json")
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(generate_json_report(args.domain, findings), f, indent=2)
+
+        if args.csv_report:
+            csv_path = os.path.join(args.output_dir, f"scan_{ts}.csv")
+            with open(csv_path, "w", encoding="utf-8", newline="") as f:
+                _write_csv_rows(findings, f, csv_delimiter)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
