@@ -107,14 +107,10 @@ Use a custom DNS resolver for DNS-dependent checks:
 phishing-monitor scan example.com --resolver 1.1.1.1
 ```
 
-### 2) CT log checks
+### 2) Takedown evidence bundles
+
+Generate a registrar-focused evidence bundle (excludes hosting/provider sections):
 
 ```bash
-phishing-monitor ct-monitor example.com --risk-threshold 0.70
-```
-
-### 3) DMARC lookup
-
-```bash
-phishing-monitor dmarc-check suspiciou
+phishing-monitor takedown suspicious-example.com --registrar-only --output reports/registrar_evidence.json
 ```
