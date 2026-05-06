@@ -43,4 +43,4 @@
 - [x] Add JSON schema validation step before report write (cycle 28)
 - [x] Expose suspicious URL reason codes in link triage summary table (cycle 29)
 - [x] Add timeout and r
-- [x] Add `--batch-file` input support to `scan` command (cycle 54)
+- [x] Add `--ct-json-stdout` flag to `ct-monitor` command (cycle 56)
