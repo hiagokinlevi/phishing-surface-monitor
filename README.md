@@ -65,6 +65,12 @@ Filter out variants that do not use common registrable public suffixes:
 phishing-monitor scan example.com --registrable-only
 ```
 
+Run one invocation against multiple root domains from a newline-delimited file (blank lines and `#` comments ignored, duplicates deduplicated):
+
+```bash
+phishing-monitor scan --batch-file brands.txt --threshold 0.75
+```
+
 With report outputs:
 
 ```bash
@@ -75,6 +81,12 @@ Write report artifacts into a specific directory (created automatically if missi
 
 ```bash
 phishing-monitor scan example.com --report --json-report --output-dir artifacts/reports
+```
+
+Apply report flags per domain during batch scans as well:
+
+```bash
+phishing-monitor scan --batch-file brands.txt --report --json-report --output-dir artifacts/reports
 ```
 
 CI-friendly aggregate-only terminal summary (still writes artifacts when requested):
@@ -106,13 +118,3 @@ Use semicolon-separated CSV output for spreadsheet locales that expect `;`:
 ```bash
 phishing-monitor scan example.com --csv-report --csv-delimiter ';'
 ```
-
-Use a custom DNS resolver for DNS-dependent checks:
-
-```bash
-phishing-monitor scan example.com --resolver 1.1.1.1
-```
-
-### 2) Takedown evidence bundles
-
-G
