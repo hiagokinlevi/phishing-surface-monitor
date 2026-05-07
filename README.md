@@ -41,6 +41,12 @@ Limit output to top risk-ranked candidates:
 phishing-monitor scan example.com --threshold 0.75 --top 10
 ```
 
+Suppress weak lexical matches before risk ranking/output:
+
+```bash
+phishing-monitor scan example.com --min-similarity 0.85
+```
+
 Cap analyzed generated variants for quick triage runs:
 
 ```bash
@@ -99,22 +105,4 @@ Stream final scan payload to stdout for CI/jq automation:
 
 ```bash
 phishing-monitor scan example.com --json-stdout | jq
-```
-
-Stream scan findings as CSV to stdout (no artifact files required):
-
-```bash
-phishing-monitor scan example.com --csv-stdout
-```
-
-With CSV artifact output:
-
-```bash
-phishing-monitor scan example.com --threshold 0.75 --csv-report
-```
-
-Use semicolon-separated CSV output for spreadsheet locales that expect `;`:
-
-```bash
-phishing-monitor scan example.com --csv-report --csv-delimiter ';'
 ```
