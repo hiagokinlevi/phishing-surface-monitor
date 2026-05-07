@@ -43,4 +43,4 @@
 - [x] Add JSON schema validation step before report write (cycle 28)
 - [x] Expose suspicious URL reason codes in link triage summary table (cycle 29)
 - [x] Add timeout and r
-- [x] Add `--min-similarity` filter to `scan` command (cycle 57)
+- [x] Add `--ct-limit` option to `ct-monitor` for max result count (cycle 58)
