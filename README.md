@@ -101,8 +101,10 @@ CI-friendly aggregate-only terminal summary (still writes artifacts when request
 phishing-monitor scan example.com --summary-only --report --json-report
 ```
 
-Stream final scan payload to stdout for CI/jq automation:
+### 2) CT monitoring
+
+Cap processed/displayed CT entries after filtering/dedup for faster triage:
 
 ```bash
-phishing-monitor scan example.com --json-stdout | jq
+phishing-monitor ct-monitor example.com --ct-limit 50
 ```
